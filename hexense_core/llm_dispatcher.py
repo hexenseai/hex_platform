@@ -1,8 +1,9 @@
+# hexense_core/llm_dispatcher.py
+
 import json
-from typing import List, Dict, Optional, Any, Union
-from .models import GptModel, GptPackage, Message
+from typing import List, Dict, Optional, Any, Union, AsyncGenerator
+from .models import GptModel, GptPackage, UserProfile, Message
 from .utils import run_tool
-from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 import openai
 import anthropic
 import google.generativeai as genai
@@ -13,6 +14,7 @@ import datetime
 
 logger = logging.getLogger(__name__)
 LOCAL_MODEL_CACHE = {}
+
 
 class LLMDispatcherError(Exception):
     """Base exception for LLM dispatcher errors"""
@@ -27,7 +29,6 @@ class ModelError(LLMDispatcherError):
     pass
 
 class ModelResponse:
-    """Standard response format for all model calls"""
     def __init__(
         self,
         content: str,
@@ -48,48 +49,24 @@ class ModelResponse:
             "error": self.error
         }
 
-def validate_api_key(company, provider: str) -> None:
-    """Validate API key for the given provider"""
-    api_key = getattr(company, f"{provider}_api_key", None)
+def validate_api_key(company, provider: str) -> str:
+    api_key = None
+    if provider == "openai":
+        api_key = getattr(company, "openai_api_key", None)
+    elif provider == "anthropic":
+        api_key = getattr(company, "claude_api_key", None)
+    elif provider == "gemini":
+        api_key = getattr(company, "gemini_api_key", None)
+
     if not api_key:
         raise APIKeyError(f"{provider.upper()} API key is not configured for the company")
     return api_key
 
-def parse_tool_calls(text: str) -> List[Dict[str, Any]]:
-    """
-    Parse tool calls from model response text.
-    Looks for JSON-like structures in the text.
-    """
-    tool_calls = []
-    try:
-        # Try to find JSON-like structures in the text
-        json_pattern = r'\{[^{}]*\}'
-        matches = re.finditer(json_pattern, text)
-        
-        for match in matches:
-            try:
-                json_str = match.group()
-                data = json.loads(json_str)
-                if isinstance(data, dict) and "tool" in data and "parameters" in data:
-                    tool_calls.append(data)
-            except json.JSONDecodeError:
-                continue
-    except Exception as e:
-        logger.error(f"Error parsing tool calls: {str(e)}")
-    
-    return tool_calls
-
 def parse_actions(text: str) -> List[Dict[str, Any]]:
-    """
-    Parse UI actions from model response text.
-    Looks for action markers and JSON structures.
-    """
     actions = []
     try:
-        # Look for action markers in the text
         action_pattern = r'\[ACTION\](.*?)\[/ACTION\]'
         matches = re.finditer(action_pattern, text, re.DOTALL)
-        
         for match in matches:
             try:
                 action_text = match.group(1).strip()
@@ -97,406 +74,351 @@ def parse_actions(text: str) -> List[Dict[str, Any]]:
                 if isinstance(action_data, dict):
                     actions.append(action_data)
             except json.JSONDecodeError:
+                logger.warning(f"Could not parse action JSON: {action_text}")
                 continue
     except Exception as e:
         logger.error(f"Error parsing actions: {str(e)}")
-    
     return actions
 
-def process_model_response(text: str) -> ModelResponse:
-    """
-    Process raw model response text into standardized format.
-    Extracts tool calls and actions, and cleans up the content.
-    """
-    # Extract tool calls and actions
-    tool_calls = parse_tool_calls(text)
-    actions = parse_actions(text)
-    
-    # Clean up the content by removing tool calls and actions
+def process_model_response_text_for_ui(text: str) -> str:
     content = text
-    for tool_call in tool_calls:
-        content = content.replace(json.dumps(tool_call), "")
-    for action in actions:
-        content = content.replace(f"[ACTION]{json.dumps(action)}[/ACTION]", "")
-    
-    # Clean up extra whitespace and newlines
-    content = re.sub(r'\n\s*\n', '\n\n', content.strip())
-    
-    return ModelResponse(
-        content=content,
-        actions=actions,
-        tool_calls=tool_calls
-    )
+    content = re.sub(r'\[ACTION\](.*?)\[/ACTION\]', '', content, flags=re.DOTALL)
+    content = content.strip()
+    return content
 
-def call_model(gpt_package, user_profile, messages: List[Dict]) -> Dict:
-    """
-    Dispatch the message to the appropriate model based on the provider.
-    Returns a standardized response format.
-    """
-    print(gpt_package)
-    try:
-        if not messages:
-            raise ValidationError("Messages list cannot be empty")
-        gpt_model = gpt_package.model if gpt_package.model else None
-        if gpt_model.is_local:
-            response = call_local_model(gpt_package, user_profile, messages)
-        else:
-            provider = gpt_model.provider.lower()
-            if provider == "openai":
-                response = call_openai_model(gpt_package, user_profile, messages)
-            elif provider == "anthropic":
-                response = call_anthropic_model(gpt_package, user_profile, messages)
-            elif provider == "gemini":
-                response = call_gemini_model(gpt_package, user_profile, messages)
-            else:
-                raise ModelError(f"Unsupported provider: {provider}")
-        
-        return response.to_dict()
-    except Exception as e:
-        logger.error(f"Error in call_model: {str(e)}")
-        print(e.__traceback__)
-        return ModelResponse(
-            content="Üzgünüm, bir hata oluştu.",
-            error=str(e)
-        ).to_dict()
-
-def get_gpt_package_services(gpt_package):
-    """
-    Converts GPT package services into a format suitable for ChatGPT's tools/functions.
-    Returns a list of tool definitions that can be used with the OpenAI API.
-    """
+def get_gpt_package_services(gpt_package: GptPackage) -> List[Dict[str, Any]]:
     tools = []
-    
-    for service in gpt_package.services.filter(is_active=True):
-        tool = {
-            "type": "function",
-            "function": {
-                "name": service.key,
-                "description": service.description,
-                "parameters": {
-                    "type": "object",
-                    "properties": service.input_schema,
-                    "required": [key for key, value in service.input_schema.items() 
-                               if value.get("required", False)]
+    if not hasattr(gpt_package, 'services') or not hasattr(gpt_package.services, 'filter'):
+        logger.warning(f"GptPackage {gpt_package.name} does not have 'services' or it's not a valid manager.")
+        return tools
+
+    try:
+        for service in gpt_package.services.filter(is_active=True):
+            properties = {}
+            required_params = []
+            if isinstance(service.input_schema, dict):
+                for param_name, schema_info in service.input_schema.items():
+                    if not isinstance(schema_info, dict):
+                        logger.warning(f"Invalid schema_info for param {param_name} in service {service.key}. Expected dict, got {type(schema_info)}")
+                        continue
+
+                    properties[param_name] = {
+                        "type": schema_info.get("type", "string"),
+                        "description": schema_info.get("description", "")
+                    }
+                    if schema_info.get("required", False):
+                        required_params.append(param_name)
+            
+            tool_definition = {
+                "type": "function",
+                "function": {
+                    "name": service.key,
+                    "description": service.description,
+                    "parameters": {
+                        "type": "object",
+                        "properties": properties,
+                    }
                 }
             }
-        }
-        
-        if service.output_schema:
-            tool["function"]["output_schema"] = service.output_schema
+            if required_params:
+                tool_definition["function"]["parameters"]["required"] = required_params
             
-        tools.append(tool)
-    
+            tools.append(tool_definition)
+    except Exception as e:
+        logger.error(f"Error processing services for GptPackage {gpt_package.name}: {e}", exc_info=True)
     return tools
 
-def build_system_prompt(user_profile, gpt_package, provider=None):
-    print("GPT PACKAGE", gpt_package.model.name)
-    """
-    Build system prompt based on user profile, GPT package and provider information.
-    Includes tool definitions for non-OpenAI providers.
-    
-    Args:
-        user: The user making the request
-        gpt_package: The GPT package configuration
-        provider: Optional provider name for specific formatting
-        
-    Returns:
-        str: The formatted system prompt
-    """
 
-    # Safely get user information with fallbacks
+async def build_system_prompt(user_profile: UserProfile, gpt_package: GptPackage, provider: Optional[str] = None) -> str:
     username = user_profile.user.get_full_name() or user_profile.user.username
-    gpt_preferences = getattr(user_profile, 'gpt_preferences', '') if user_profile else ""
-    work_experience = getattr(user_profile, 'work_experience_notes', '') if user_profile else ""
+    gpt_preferences = user_profile.gpt_preferences or ""
+    work_experience = user_profile.work_experience_notes or ""
 
-    # Safely get role information
-    role = getattr(user_profile.role, 'name', 'Tanımsız') if user_profile and user_profile.role else "Tanımsız"
-    role_desc = getattr(user_profile.role, 'description', '') if user_profile and user_profile.role else ""
+    role_name = "Tanımsız"
+    role_desc = ""
+    if user_profile.role:
+        role_name = user_profile.role.name
+        role_desc = user_profile.role.description or ""
 
-    # Safely get department information
-    department = getattr(user_profile.department, 'name', 'Tanımsız') if user_profile and user_profile.department else "Tanımsız"
-    department_desc = getattr(user_profile.department, 'description', '') if user_profile and user_profile.department else ""
+    department_name = "Tanımsız"
+    department_desc = ""
+    if user_profile.department:
+        department_name = user_profile.department.name
+        department_desc = user_profile.department.description or ""
 
-    # Safely get company information
-    company = getattr(user_profile.company, 'name', 'Tanımsız') if user_profile and user_profile.company else "Tanımsız"
-    company_desc = getattr(user_profile.company, 'description', '') if user_profile and user_profile.company else ""
-
-    gpt_info = gpt_package.description or ""
-
-    # Get today's date and time
-    now_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    # Get last user action/message timestamp
-    last_action = Message.objects.filter(conversation__user_profile=user_profile, sender='user').order_by('-timestamp').first()
-    last_action_str = last_action.timestamp.strftime('%Y-%m-%d %H:%M:%S') if last_action else 'Yok'
-
-    # Conditional info blocks
-    company_block = f"- Departmanı: {department} → {department_desc}\n- Şirketi: {company} → {company_desc}" if getattr(gpt_package, 'include_company_info', False) else ""
-    personal_block = f"- İş Deneyimi ve Uzmanlık Alanları:\n\"\"\"{work_experience}\"\"\"" if getattr(gpt_package, 'include_personal_info', False) else ""
-
-    # Get available tools for the package
-    tools = get_gpt_package_services(gpt_package)
-    tools_description = ""
+    company_name = "Tanımsız"
+    company_desc = ""
+    if user_profile.company:
+        company_name = user_profile.company.name
+        company_desc = user_profile.company.description or ""
     
-    if tools and provider in ["anthropic", "gemini", "local"]:
-        tools_description = "\n\n🔧 Kullanılabilir Fonksiyonlar:\n"
-        for tool in tools:
-            tool_name = tool.get("function", {}).get("name", "")
-            tool_desc = tool.get("function", {}).get("description", "")
-            tool_params = tool.get("function", {}).get("parameters", {}).get("properties", {})
-            
-            tools_description += f"\n- {tool_name}: {tool_desc}\n"
-            if tool_params:
-                tools_description += "  Parametreler:\n"
-                for param_name, param_info in tool_params.items():
-                    param_desc = param_info.get("description", "")
-                    param_type = param_info.get("type", "")
-                    tools_description += f"    - {param_name} ({param_type}): {param_desc}\n"
+    gpt_package_description = gpt_package.description or ""
+    gpt_package_name = gpt_package.name
 
-    base_prompt = f"""
-Sen Hexense platformunda '{gpt_package.name}' isimli özel amaçlı bir yapay zeka yardımcısısın.
+    now_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    last_user_message_obj = await Message.objects.filter(
+        conversation__user_profile=user_profile,
+        sender='user'
+    ).order_by('-timestamp').afirst()
+    last_action_str = last_user_message_obj.timestamp.strftime('%Y-%m-%d %H:%M:%S') if last_user_message_obj else 'Yok'
+
+    company_block = ""
+    if gpt_package.include_company_info: 
+        company_block = f"- Departmanı: {department_name} ({department_desc})\n- Şirketi: {company_name} ({company_desc})"
+    
+    personal_block = ""
+    if gpt_package.include_personal_info: 
+        personal_block = f"- İş Deneyimi ve Uzmanlık Alanları:\n\"\"\"{work_experience}\"\"\""
+
+    tools_description_for_prompt = ""
+    tools_for_prompt = get_gpt_package_services(gpt_package)
+    if provider and provider.lower() not in ["openai"] and tools_for_prompt:
+        tools_description_for_prompt = "\n\n🔧 Kullanılabilir Fonksiyonlar (Araçlar):\n"
+        for tool in tools_for_prompt:
+            func_info = tool.get("function", {})
+            tool_name = func_info.get("name", "Bilinmeyen Araç")
+            tool_desc = func_info.get("description", "Açıklama yok")
+            params_desc_list = []
+            if "parameters" in func_info and "properties" in func_info["parameters"]:
+                for param_name, param_data in func_info["parameters"]["properties"].items():
+                    param_type = param_data.get("type", "bilinmiyor")
+                    param_description = param_data.get("description", "")
+                    is_required = param_name in func_info.get("parameters", {}).get("required", [])
+                    req_str = " (zorunlu)" if is_required else ""
+                    params_desc_list.append(f"    - {param_name} ({param_type}{req_str}): {param_description}")
+            params_str = "\n".join(params_desc_list)
+            tools_description_for_prompt += f"\n- {tool_name}: {tool_desc}\n"
+            if params_str:
+                tools_description_for_prompt += f"  Parametreler:\n{params_str}\n"
+
+    base_prompt = f"""Sen Hexense platformunda '{gpt_package_name}' isimli özel amaçlı bir yapay zeka yardımcısısın.
 
 📅 Bugünün tarihi ve saati: {now_str}
-🕑 Kullanıcının son işlemi: {last_action_str}
+🕑 Kullanıcının bilinen son işlemi: {last_action_str}
 
 📌 Kullanıcı profili:
 - Kullanıcı adı: {username}
-- Rolü: {role} → {role_desc}
+- Rolü: {role_name} ({role_desc})
 {company_block}
 - GPT Tercihleri:
 \"\"\"{gpt_preferences}\"\"\"
 {personal_block}
 
-📦 GPT paket açıklaması:
-\"\"\"{gpt_info}\"\"\"
+📦 Görev Tanımın ve Yeteneklerin ({gpt_package_name}):
+\"\"\"{gpt_package_description}\"\"\"
 
-⛔ Lütfen sistemin güvenlik kurallarına uy. Kullanıcının şirket dışı kaynaklara doğrudan erişimi yoktur.
-✅ Fonksiyonlar (tool calling) varsa onları kullanarak işlem yap.
-⛳ Her yanıtın sonunda gerekiyorsa bir `actions` listesi üret. UI bileşenlerini tetikleyebiliriz.
+🎯 Temel Hedefin:
+Kullanıcının işini kolaylaştırmak, ona doğru ve etkili bilgiler sunmak, önerilerde bulunmak ve gerektiğinde onun adına tanımlanmış araçları (fonksiyonları) kullanarak işlemler başlatmak.
 
-🎯 Hedefin:
-Kullanıcının işini kolaylaştırmak, ona öneriler sunmak ve gerektiğinde onun adına işlemler başlatmak.
-{tools_description}
-""".strip()
-
-    # Claude & Gemini için özel yönlendirme
-    if provider in ["anthropic", "gemini"]:
+❗ Önemli Kurallar:
+1. Güvenlik ve gizlilik kurallarına daima uy.
+2. Yanıtların net, anlaşılır ve profesyonel bir dilde olmalı.
+3. Eğer bir bilgiye sahip değilsen veya bir konuda emin değilsen, bunu açıkça belirt. Yanlış veya yanıltıcı bilgi verme.
+4. Kullanıcıya doğrudan dosya sistemi erişimi, veritabanı sorgusu çalıştırma gibi tehlikeli işlemler yaptıramazsın. Sadece sana tanımlanmış araçları kullan.
+5. Eğer araçları kullanman gerekiyorsa, bunu yap. Çıktı formatın araç çağırma için JSON olmalı (OpenAI için özel format).
+6. Yanıtının sonunda, kullanıcı arayüzünde gösterilmesi gereken özel bileşenler veya yapılması gereken aksiyonlar varsa, bunları `[ACTION]{{...JSON...}}[/ACTION]` formatında belirt.
+{tools_description_for_prompt}
+"""
+    if gpt_package.system_prompt:
+        base_prompt += f"\n\n📘 Ek Sistem Talimatları ({gpt_package_name}):\n{gpt_package.system_prompt}"
+    
+    if provider and provider.lower() in ["anthropic", "gemini"] and tools_for_prompt:
         base_prompt += """
 
-🧠 Sadece aşağıdaki JSON formatında çıktı üret:
-{
-  "tool": "kullanılacak_tool_adi",
-  "parameters": {
-    "param1": "deger1",
-    "param2": "deger2"
+🧠 Araç Kullanım Çıktı Formatı (SADECE ARAÇ KULLANACAKSAN):
+Aşağıdaki JSON formatında bir veya daha fazla araç çağrısı içeren bir liste döndür:
+```json
+[
+  {
+    "tool_name": "kullanilacak_arac_adi_1",
+    "parameters": {
+      "param1": "deger1",
+      "param2": "deger2"
+    }
+  },
+  {
+    "tool_name": "kullanilacak_arac_adi_2",
+    "parameters": {}
   }
-}
-🔒 Açıklama, yorum veya başka metin ekleme. Sadece geçerli JSON döndür.
-
-📝 UI aksiyonları için:
-[ACTION]{
-  "type": "action_type",
-  "parameters": {
-    "param1": "deger1",
-    "param2": "deger2"
-  }
-}[/ACTION]
+]
+Eğer metin yanıtı vereceksen, bu JSON formatını KULLANMA. Sadece normal metin yanıtı ver.
 """
+    return base_prompt.strip()
 
-    # Ek system_prompt varsa paketten dahil et
-    if gpt_package.system_prompt:
-        base_prompt += f"\n\n📘 Sistem Ek Açıklaması:\n{gpt_package.system_prompt}"
 
-    return base_prompt
+async def call_openai_model(gpt_package: GptPackage, user_profile: UserProfile, messages: List[Dict[str, Any]]) -> AsyncGenerator[Dict[str, Any], None]:
 
-def build_prompt_text(messages: List[Dict]) -> str:
-    """
-    Build a text prompt from a list of messages.
-    
-    Args:
-        messages: List of message dictionaries
-        
-    Returns:
-        str: Formatted prompt text
-    """
-    return "\n".join(
-        f"{m['role'].capitalize()}: {m['content']}" for m in messages
-    ) + "\nAssistant:"
+    if not user_profile.company:
+        logger.error(f"User {user_profile.user.username} does not have an associated company. Cannot retrieve OpenAI API key.")
+        yield {"type": "error", "data": "User profile is not associated with a company."}
+        return
 
-def build_local_prompt(messages: List[Dict]) -> str:
-    """
-    Build a prompt for local models with emoji indicators.
-    
-    Args:
-        messages: List of message dictionaries
-        
-    Returns:
-        str: Formatted prompt text with emoji indicators
-    """
-    prompt = ""
-    for msg in messages:
-        role = msg["role"]
-        content = msg["content"]
-        if role == "system":
-            prompt += f"[Sistem Notu]: {content}\n"
-        elif role == "user":
-            prompt += f"👤: {content}\n"
-        elif role == "assistant":
-            prompt += f"🤖: {content}\n"
-    prompt += "🤖: "  # LLM burada devam etsin
-    return prompt
-
-def call_openai_model(gpt_package, user_profile, messages) -> ModelResponse:
-    print(gpt_package)
     try:
-        tools = get_gpt_package_services(gpt_package)
-        gpt_model = gpt_package.model if gpt_package.model else None
-        system_prompt = build_system_prompt(user_profile, gpt_package, provider="openai")
-        messages = [{"role": "system", "content": system_prompt}] + messages
-
         api_key = validate_api_key(user_profile.company, "openai")
-        openai.api_key = api_key
+    except APIKeyError as e:
+        logger.error(str(e))
+        yield {"type": "error", "data": str(e)}
+        return
 
-        history_messages = messages.copy()
-        max_iterations = 5
-        current_iteration = 0
-        final_response = None
+    from openai import AsyncOpenAI
+    async_openai_client = AsyncOpenAI(api_key=api_key)
 
-        while current_iteration < max_iterations:
-            try:
-                response = openai.chat.completions.create(
-                    model=gpt_model.name,
-                    messages=history_messages,
-                    temperature=0.7,
-                    tools=tools or None,
-                    tool_choice="auto" if tools else None
-                )
+    gpt_model = gpt_package.model
+    if not gpt_model:
+        logger.error(f"GptPackage {gpt_package.name} has no GptModel associated.")
+        yield {"type": "error", "data": f"GptPackage {gpt_package.name} has no GptModel."}
+        return
 
-                message = response.choices[0].message
-                if not message.tool_calls:
-                    return process_model_response(message.content)
+    tools = get_gpt_package_services(gpt_package) 
 
-                tool_responses = []
-                for tool_call in message.tool_calls:
-                    try:
-                        result = run_tool(
-                            tool_name=tool_call.function.name,
-                            arguments=tool_call.function.arguments,
-                            user_profile=user_profile
-                        )
-                        tool_responses.append({
-                            "tool_call_id": tool_call.id,
-                            "role": "tool",
-                            "name": tool_call.function.name,
-                            "content": json.dumps(result)
-                        })
-                    except Exception as e:
-                        logger.error(f"Tool execution error: {str(e)}")
-                        tool_responses.append({
-                            "tool_call_id": tool_call.id,
-                            "role": "tool",
-                            "name": tool_call.function.name,
-                            "content": json.dumps({"error": str(e)})
-                        })
+    logger.debug(f"Calling OpenAI model {gpt_model.name} with {len(messages)} messages. Tools: {bool(tools)}")
 
-                history_messages.append({
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [
-                        {
-                            "id": t.id,
-                            "type": "function",
-                            "function": {
-                                "name": t.function.name,
-                                "arguments": t.function.arguments
-                            }
-                        } for t in message.tool_calls
-                    ]
-                })
-
-                history_messages.extend(tool_responses)
-                current_iteration += 1
-
-            except openai.APIError as e:
-                logger.error(f"OpenAI API error: {str(e)}")
-                raise ModelError(f"OpenAI API error: {str(e)}")
-
-        return ModelResponse(
-            content="İşlem tamamlanamadı.",
-            error="Maximum iteration limit reached"
-        )
-
-    except Exception as e:
-        logger.error(f"Unexpected error in call_openai_model: {str(e)}")
-        raise LLMDispatcherError(f"Error in OpenAI model call: {str(e)}")
-
-def call_anthropic_model(gpt_package, user_profile, messages) -> ModelResponse:
     try:
-        api_key = validate_api_key(user_profile.company, "claude")
-        client = anthropic.Anthropic(api_key=api_key)
-        system_prompt = build_system_prompt(user_profile, gpt_package, provider="anthropic")
-        gpt_model = gpt_package.model if gpt_package.model else None
-        content = [{"role": m["role"], "content": m["content"]} for m in messages]
-
-        response = client.messages.create(
+        response_stream = await async_openai_client.chat.completions.create(
             model=gpt_model.name,
-            system=system_prompt,
-            messages=content,
-            max_tokens=1000
+            messages=messages,
+            tools=tools if tools else None,
+            tool_choice="auto" if tools else None,
+            stream=True,
+            temperature=0.7, 
         )
-        
-        return process_model_response(response.content[0].text)
-    except Exception as e:
-        logger.error(f"Unexpected error in call_anthropic_model: {str(e)}")
-        raise LLMDispatcherError(f"Error in Anthropic model call: {str(e)}")
 
-def call_gemini_model(gpt_package, user_profile, messages) -> ModelResponse:
-    try:
-        api_key = validate_api_key(user_profile.company, "gemini")
-        genai.configure(api_key=api_key)
-        gpt_model = gpt_package.model if gpt_package.model else None
-        system_prompt = build_system_prompt(user_profile, gpt_package, provider="gemini")
-        messages = [{"role": "system", "content": system_prompt}] + messages
-        model = genai.GenerativeModel(gpt_model.name)
-        text_prompt = build_prompt_text(messages)
-        response = model.generate_content(text_prompt)
-        
-        return process_model_response(response.text)
-    except Exception as e:
-        logger.error(f"Unexpected error in call_gemini_model: {str(e)}")
-        raise LLMDispatcherError(f"Error in Gemini model call: {str(e)}")
+        accumulated_tool_calls: Dict[int, Dict[str, Any]] = {}
 
-def call_local_model(gpt_package, user_profile, messages) -> ModelResponse:
-    try:
-        gpt_model = gpt_package.model if gpt_package.model else None
-        model_key = gpt_model.local_path or gpt_model.name
+        async for chunk in response_stream:
+            delta = chunk.choices[0].delta
+            finish_reason = chunk.choices[0].finish_reason
 
-        if model_key not in LOCAL_MODEL_CACHE:
-            try:
-                tokenizer = AutoTokenizer.from_pretrained(model_key)
-                model = AutoModelForCausalLM.from_pretrained(model_key)
-                pipe = pipeline("text-generation", model=model, tokenizer=tokenizer)
-                LOCAL_MODEL_CACHE[model_key] = pipe
-            except Exception as e:
-                logger.error(f"Error loading local model {model_key}: {str(e)}")
-                raise ModelError(f"Failed to load local model: {str(e)}")
-        
-        system_prompt = build_system_prompt(user_profile, gpt_package, provider="local")
-        prompt = system_prompt + "\n\n" + build_prompt_text(messages)
-        
-        try:
-            result = LOCAL_MODEL_CACHE[model_key](
-                prompt, 
-                max_new_tokens=500, 
-                do_sample=True,
-                temperature=0.7,
-                top_p=0.9
-            )[0]["generated_text"]
+            if delta and delta.content:
+                yield {"type": "content_chunk", "data": delta.content}
             
-            return process_model_response(result)
-        except Exception as e:
-            logger.error(f"Error generating text with local model: {str(e)}")
-            raise ModelError(f"Failed to generate text: {str(e)}")
-        
+            if delta and delta.tool_calls:
+                for tool_call_chunk in delta.tool_calls:
+                    index = tool_call_chunk.index
+                    if index not in accumulated_tool_calls:
+                        accumulated_tool_calls[index] = {
+                            "id": None, 
+                            "type": None, 
+                            "function_name": "", 
+                            "function_arguments": "" 
+                        }
+                    
+                    if tool_call_chunk.id:
+                        accumulated_tool_calls[index]["id"] = tool_call_chunk.id
+                    if tool_call_chunk.type:
+                        accumulated_tool_calls[index]["type"] = tool_call_chunk.type
+
+                    if tool_call_chunk.function:
+                        if tool_call_chunk.function.name:
+                            accumulated_tool_calls[index]["function_name"] = tool_call_chunk.function.name
+                        if tool_call_chunk.function.arguments:
+                            accumulated_tool_calls[index]["function_arguments"] += tool_call_chunk.function.arguments
+            
+            if finish_reason == "tool_calls":
+                tool_calls_to_yield = []
+                for index in sorted(accumulated_tool_calls.keys()):
+                    tc = accumulated_tool_calls[index]
+                    if not tc.get("id"):
+                        logger.error(f"Tool call at index {index} missing ID in stream. accumulated_tc: {tc}")
+                        continue 
+
+                    tool_calls_to_yield.append({
+                        "id": tc["id"],
+                        "type": tc.get("type", "function"),
+                        "function": {
+                            "name": tc["function_name"],
+                            "arguments": tc["function_arguments"]
+                        }
+                    })
+                if tool_calls_to_yield:
+                    yield {"type": "tool_calls_ready", "data": tool_calls_to_yield}
+                accumulated_tool_calls.clear() 
+
+            elif finish_reason == "stop":
+                if accumulated_tool_calls:
+                    logger.warning("Stream finished with 'stop' but there were unyielded accumulated tool calls.")
+                yield {"type": "stream_end", "data": {"finish_reason": finish_reason}}
+            elif finish_reason:
+                logger.warning(f"Stream finished with reason: {finish_reason}")
+                yield {"type": "stream_end", "data": {"finish_reason": finish_reason, "warning": "Stream finished with non-standard reason."}}
+
+
+    except openai.APIError as e:
+        logger.error(f"OpenAI API error: {str(e)}", exc_info=True)
+        yield {"type": "error", "data": f"OpenAI API error: {str(e)}"}
     except Exception as e:
-        logger.error(f"Unexpected error in call_local_model: {str(e)}")
-        raise LLMDispatcherError(f"Error in local model call: {str(e)}")
+        logger.error(f"Unexpected error in call_openai_model: {str(e)}", exc_info=True)
+        yield {"type": "error", "data": f"Unexpected error during OpenAI call: {str(e)}"}
+
+
+async def call_anthropic_model(gpt_package: GptPackage, user_profile: UserProfile, messages: List[Dict[str, Any]]) -> AsyncGenerator[Dict[str, Any], None]:
+    logger.warning("Anthropic stream and tool use is not fully implemented yet in llm_dispatcher.")
+    yield {"type": "content_chunk", "data": "[Anthropic yanıtı buraya gelecek - stream implementasyonu gerekiyor]"}
+    yield {"type": "stream_end", "data": {"finish_reason": "stop"}}
+
+async def call_gemini_model(gpt_package: GptPackage, user_profile: UserProfile, messages: List[Dict[str, Any]]) -> AsyncGenerator[Dict[str, Any], None]:
+    logger.warning("Gemini stream and tool use is not fully implemented yet in llm_dispatcher.")
+    yield {"type": "content_chunk", "data": "[Gemini yanıtı buraya gelecek - stream implementasyonu gerekiyor]"}
+    yield {"type": "stream_end", "data": {"finish_reason": "stop"}}
+
+async def call_local_model(gpt_package: GptPackage, user_profile: UserProfile,messages: List[Dict[str, Any]]) -> AsyncGenerator[Dict[str, Any], None]:
+    logger.warning("Local model stream is not implemented yet in llm_dispatcher.")
+    yield {"type": "content_chunk", "data": "[Yerel model yanıtı buraya gelecek - stream implementasyonu gerekiyor]"}
+    yield {"type": "stream_end", "data": {"finish_reason": "stop"}}
+
+async def call_model(gpt_package: GptPackage, user_profile: UserProfile, messages: List[Dict[str, Any]]) -> AsyncGenerator[Dict[str, Any], None]:
+    try:
+        if not messages: # En azından bir kullanıcı mesajı olmalı
+            logger.error("call_model called with an empty messages list.")
+            raise ValidationError("Messages list cannot be empty for call_model")
+        gpt_model = gpt_package.model
+        if not gpt_model:
+            logger.error(f"GptPackage {gpt_package.name} has no GptModel associated.")
+            # ModelError fırlatmak yerine, yield ile hata objesi döndürelim ki consumer işleyebilsin.
+            yield {"type": "error", "data": f"GptPackage {gpt_package.name} does not have an associated GptModel."}
+            yield {"type": "stream_end", "data": {"finish_reason": "error", "details": "No GptModel in GptPackage."}}
+            return # Jeneratörden çık
+
+        system_prompt_text = await build_system_prompt(user_profile, gpt_package, provider=gpt_model.provider.lower())
+        
+        processed_messages = [{"role": "system", "content": system_prompt_text}] + messages
+        
+        provider = gpt_model.provider.lower()
+
+        if gpt_model.is_local:
+            async for chunk_data in call_local_model(gpt_package, user_profile, processed_messages):
+                yield chunk_data
+        elif provider == "openai":
+            async for chunk_data in call_openai_model(gpt_package, user_profile, processed_messages):
+                yield chunk_data
+        elif provider == "anthropic":
+            async for chunk_data in call_anthropic_model(gpt_package, user_profile, processed_messages):
+                yield chunk_data
+        elif provider == "gemini":
+            async for chunk_data in call_gemini_model(gpt_package, user_profile, processed_messages):
+                yield chunk_data
+        else:
+            logger.error(f"Unsupported provider: {provider}")
+            yield {"type": "error", "data": f"Unsupported provider: {provider}"}
+            yield {"type": "stream_end", "data": {"finish_reason": "error", "details": f"Unsupported provider: {provider}"}}
+
+
+    except APIKeyError as e:
+        logger.error(f"API Key Error in call_model: {str(e)}")
+        yield {"type": "error", "data": str(e)}
+        yield {"type": "stream_end", "data": {"finish_reason": "error", "details": str(e)}}
+    except ModelError as e: # Bu da bizim tanımladığımız bir hata
+        logger.error(f"Model Error in call_model: {str(e)}")
+        yield {"type": "error", "data": str(e)}
+        yield {"type": "stream_end", "data": {"finish_reason": "error", "details": str(e)}}
+    except ValidationError as e:
+        logger.error(f"Validation Error in call_model: {str(e)}")
+        yield {"type": "error", "data": f"Input validation error: {str(e)}"}
+        yield {"type": "stream_end", "data": {"finish_reason": "error", "details": f"Input validation error: {str(e)}"}}
+    except Exception as e:
+        logger.error(f"Unexpected error in call_model: {str(e)}", exc_info=True)
+        yield {"type": "error", "data": f"An unexpected error occurred: {str(e)}"}
+        yield {"type": "stream_end", "data": {"finish_reason": "error", "details": f"An unexpected error occurred: {str(e)}"}}    
+    
+
