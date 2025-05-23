@@ -74,7 +74,7 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'hexense_platform.wsgi.application'
+#WSGI_APPLICATION = 'hexense_platform.wsgi.application'
 
 REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
@@ -151,3 +151,9 @@ STATIC_ROOT = os.path.join(BASE_DIR, 'static')  # collectstatic komutuyla toplan
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 ASGI_APPLICATION = 'hexense_platform.asgi.application'
+
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer',
+    },
+}

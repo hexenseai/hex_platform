@@ -16,7 +16,6 @@ import io
 import pandas as pd
 
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
-QDRANT_COLLECTION = "agent_profiles"
 _embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
 qdrant_client = QdrantClient(QDRANT_URL)
 
@@ -266,10 +265,10 @@ class GptPackage(models.Model):
         super().save(*args, **kwargs)
         # Qdrant koleksiyonu oluşturulmamışsa oluştur
         try:
-            qdrant_client.get_collection(QDRANT_COLLECTION)
+            qdrant_client.get_collection("gpt_packages")
         except Exception:
             qdrant_client.recreate_collection(
-                collection_name=QDRANT_COLLECTION,
+                collection_name="gpt_packages",
                 vectors_config=qdrant_models.VectorParams(size=384, distance="Cosine")
             )
         # Embedding oluştur
@@ -277,7 +276,7 @@ class GptPackage(models.Model):
         embedding = _embedding_model.encode(description).tolist()
         # Qdrant'a ekle/güncelle
         qdrant_client.upsert(
-            collection_name=QDRANT_COLLECTION,
+            collection_name="gpt_packages",
             points=[
                 qdrant_models.PointStruct(
                     id=str(self.id),
@@ -297,7 +296,7 @@ class GptPackage(models.Model):
     def delete(self, *args, **kwargs):
         # Qdrant'tan sil
         qdrant_client.delete(
-            collection_name=QDRANT_COLLECTION,
+            collection_name="gpt_packages",
             points_selector=qdrant_models.PointIdsList(
                 points=[str(self.id)]
             )
