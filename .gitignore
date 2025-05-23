@@ -1,0 +1,74 @@
+.env
+# Python
+*.py[cod]
+__pycache__/
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Django
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+media/
+static/
+
+# IDE
+.idea/
+.vscode/
+.cursor/
+*.swp
+*.swo
+*~
+
+# Virtual Environment
+venv/
+ENV/
+.env/
+.venv/
+
+# Database
+*.sqlite3
+*.db
+
+# Coverage
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+
+# Misc
+.DS_Store
+Thumbs.db
+# Editor/IDE specific files
+*.sublime-project
+*.sublime-workspace
+*.komodoproject
+.komodotools/
+.atom/
+.brackets.json
+.directory
+.project
+.settings/
+*.code-workspace
+.history/
+nbproject/
+.netbeans/
+*.tmp
+*.bak

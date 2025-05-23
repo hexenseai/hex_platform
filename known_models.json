@@ -1,0 +1,242 @@
+{
+  "gpt-3.5-turbo": {
+    "context_window": 16384,
+    "supports_function_call": true,
+    "supports_multimodal": false,
+    "supports_tool_use": true,
+    "capabilities": [
+      "text",
+      "code"
+    ],
+    "input_types": [
+      "text"
+    ],
+    "output_types": [
+      "text",
+      "json"
+    ],
+    "optimized_for": [
+      "general",
+      "cost"
+    ],
+    "pricing_per_1k": {
+      "input": 0.001,
+      "output": 0.002
+    }
+  },
+  "gpt-4": {
+    "context_window": 8192,
+    "supports_function_call": true,
+    "supports_multimodal": false,
+    "supports_tool_use": true,
+    "capabilities": [
+      "text",
+      "code"
+    ],
+    "input_types": [
+      "text"
+    ],
+    "output_types": [
+      "text",
+      "json"
+    ],
+    "optimized_for": [
+      "reasoning"
+    ],
+    "pricing_per_1k": {
+      "input": 0.03,
+      "output": 0.06
+    }
+  },
+  "gpt-4-32k": {
+    "context_window": 32768,
+    "supports_function_call": true,
+    "supports_multimodal": false,
+    "supports_tool_use": true,
+    "capabilities": [
+      "text",
+      "code"
+    ],
+    "input_types": [
+      "text"
+    ],
+    "output_types": [
+      "text",
+      "json"
+    ],
+    "optimized_for": [
+      "long_context"
+    ],
+    "pricing_per_1k": {
+      "input": 0.06,
+      "output": 0.12
+    }
+  },
+  "gpt-4o": {
+    "context_window": 128000,
+    "supports_function_call": true,
+    "supports_multimodal": true,
+    "supports_tool_use": true,
+    "capabilities": [
+      "text",
+      "image",
+      "audio",
+      "code"
+    ],
+    "input_types": [
+      "text",
+      "image",
+      "audio",
+      "file_upload"
+    ],
+    "output_types": [
+      "text",
+      "image",
+      "json"
+    ],
+    "optimized_for": [
+      "general",
+      "speed",
+      "reasoning"
+    ],
+    "pricing_per_1k": {
+      "input": 0.005,
+      "output": 0.015
+    }
+  },
+  "claude-3-opus-20240229": {
+    "context_window": 200000,
+    "supports_function_call": false,
+    "supports_multimodal": true,
+    "supports_tool_use": false,
+    "capabilities": [
+      "text",
+      "image"
+    ],
+    "input_types": [
+      "text",
+      "image",
+      "file_upload"
+    ],
+    "output_types": [
+      "text"
+    ],
+    "optimized_for": [
+      "reasoning",
+      "long_context"
+    ],
+    "pricing_per_1k": {
+      "input": 0.015,
+      "output": 0.075
+    }
+  },
+  "claude-3-sonnet-20240229": {
+    "context_window": 200000,
+    "supports_function_call": false,
+    "supports_multimodal": true,
+    "supports_tool_use": false,
+    "capabilities": [
+      "text",
+      "image"
+    ],
+    "input_types": [
+      "text",
+      "image",
+      "file_upload"
+    ],
+    "output_types": [
+      "text"
+    ],
+    "optimized_for": [
+      "balanced",
+      "general"
+    ],
+    "pricing_per_1k": {
+      "input": 0.003,
+      "output": 0.015
+    }
+  },
+  "claude-3-haiku-20240307": {
+    "context_window": 200000,
+    "supports_function_call": false,
+    "supports_multimodal": true,
+    "supports_tool_use": false,
+    "capabilities": [
+      "text",
+      "image"
+    ],
+    "input_types": [
+      "text",
+      "image"
+    ],
+    "output_types": [
+      "text"
+    ],
+    "optimized_for": [
+      "speed",
+      "cost"
+    ],
+    "pricing_per_1k": {
+      "input": 0.00025,
+      "output": 0.00125
+    }
+  },
+  "gemini-1.5-pro-latest": {
+    "context_window": 1000000,
+    "supports_function_call": true,
+    "supports_multimodal": true,
+    "supports_tool_use": true,
+    "capabilities": [
+      "text",
+      "image",
+      "audio",
+      "code"
+    ],
+    "input_types": [
+      "text",
+      "image",
+      "pdf",
+      "file_upload"
+    ],
+    "output_types": [
+      "text",
+      "json",
+      "image"
+    ],
+    "optimized_for": [
+      "general",
+      "long_context",
+      "multimodal"
+    ],
+    "pricing_per_1k": {
+      "input": 0.01,
+      "output": 0.03
+    }
+  },
+  "gemini-1.5-flash-latest": {
+    "context_window": 1000000,
+    "supports_function_call": true,
+    "supports_multimodal": true,
+    "supports_tool_use": true,
+    "capabilities": [
+      "text",
+      "image"
+    ],
+    "input_types": [
+      "text",
+      "image",
+      "file_upload"
+    ],
+    "output_types": [
+      "text"
+    ],
+    "optimized_for": [
+      "speed",
+      "cost"
+    ],
+    "pricing_per_1k": {
+      "input": 0.0025,
+      "output": 0.005
+    }
+  }
+}

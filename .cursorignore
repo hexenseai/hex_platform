@@ -1,0 +1,60 @@
+# Cursor specific files
+.cursor/
+.cursorignore
+
+# Python and Django
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.egg-info/
+.eggs/
+*.pyc
+
+# Virtual Environment
+venv/
+.env/
+.venv/
+env/
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-*
+.project
+.settings/
+.directory
+.history/
+
+# Logs and databases
+*.log
+*.sqlite3
+*.db
+db.sqlite3-journal
+
+# Local development
+local_settings.py
+.env
+
+# Media and static files
+media/
+static/
+staticfiles/
+
+# Test coverage
+.coverage
+htmlcov/
+.tox/
+.pytest_cache/
+
+# Temporary files
+*.bak
+*.tmp
+.DS_Store
+Thumbs.db

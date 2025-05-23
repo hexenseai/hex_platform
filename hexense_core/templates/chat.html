@@ -1,0 +1,934 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Hexense{% endblock %}</title>
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    .sidebar {
+      width: 260px;
+      background-color: #1f2937;
+      position: fixed;
+      left: 0;
+      top: 56px;
+      z-index: 40;
+      transition: transform 0.3s ease-in-out;
+      height: calc(100vh - 56px);
+    }
+    .sidebar-open {
+      transform: translateX(0);
+    }
+    .sidebar-closed {
+      transform: translateX(-100%);
+    }
+    @media (min-width: 768px) {
+      .sidebar-closed {
+        transform: translateX(-100%); /* Always hide on start even on desktop */
+      }
+    }
+    .chat-input-container {
+      max-height: 200px;
+      overflow-y: auto;
+    }
+    .chat-input {
+      min-height: 24px;
+      max-height: 200px;
+      resize: none;
+    }
+    .message-user {
+      background-color: #1f2937;
+      color: #f3f4f6;
+    }
+    .message-assistant {
+      background-color: #111827;
+      color: #f3f4f6;
+    }
+    .message-container {
+      padding: 1.5rem;
+      border-bottom: 1px solid #374151;
+    }
+    .message-content {
+      max-width: 48rem;
+      margin: 0 auto;
+    }
+    .avatar {
+      width: 30px;
+      height: 30px;
+      border-radius: 0.25rem;
+    }
+    .typing-indicator {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .typing-dot {
+      width: 8px;
+      height: 8px;
+      background-color: #6b7280;
+      border-radius: 50%;
+      animation: typing 1.4s infinite ease-in-out;
+    }
+    .typing-dot:nth-child(1) { animation-delay: 0s; }
+    .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+    .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes typing {
+      0%, 60%, 100% { transform: translateY(0); }
+      30% { transform: translateY(-4px); }
+    }
+    /* Dark theme styles */
+    .main-container {
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+      background-color: #111827;
+    }
+    #main-flex-area {
+      display: flex;
+      flex: 1 1 0%;
+      height: 100vh;
+      min-width: 0;
+    }
+    .main-content {
+      display: flex;
+      flex-direction: column;
+      flex: 1 1 0%;
+      min-width: 0;
+      height: 100vh;
+      width: 100%;
+      transition: width 0.3s;
+      background-color: #111827;
+    }
+    .main-content.with-canvas {
+      width: 50vw !important;
+      max-width: 50vw !important;
+      flex: 0 0 50vw !important;
+    }
+    #canvas-panel {
+      display: none;
+    }
+    #canvas-panel.open {
+      display: flex !important;
+      flex-direction: column;
+      height: 100vh;
+      position: relative;
+    }
+    .chat-container {
+      flex: 1 1 auto;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      min-height: 0;
+      height: 100%;
+    }
+    .chat-messages {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      min-height: 0;
+    }
+    .chat-form-container {
+      position: relative;
+      left: 0;
+      bottom: 50px;
+      width: 100%;
+      background-color: #111827;
+      padding: 1rem;
+      z-index: 10;
+      box-sizing: border-box;
+      flex-shrink: 0;
+      display: block !important;
+      transition: width 0.3s ease;
+    }
+    .conversation-item {
+      padding: 0.75rem;
+      margin: 0.25rem;
+      border-radius: 0.375rem;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+    .conversation-item:hover {
+      background-color: #374151;
+    }
+    .conversation-item.active {
+      background-color: #374151;
+    }
+    .chat-input-container {
+      background-color: #1f2937;
+      border: 1px solid #374151;
+      border-radius: 0.5rem;
+      padding: 0.75rem;
+    }
+    .chat-input {
+      background-color: transparent;
+      color: #f3f4f6;
+      width: 100%;
+      min-height: 24px;
+      max-height: 200px;
+      resize: none;
+      border: none;
+      outline: none;
+    }
+    .chat-input::placeholder {
+      color: #9ca3af;
+    }
+    .send-button {
+      background-color: #3b82f6;
+      color: white;
+      padding: 0.5rem;
+      border-radius: 0.5rem;
+      transition: background-color 0.2s;
+      margin-top: 0.5rem;
+    }
+    .send-button:hover {
+      background-color: #2563eb;
+    }
+    /* Markdown Styles */
+    .message-content .flex-grow {
+      line-height: 1.6;
+    }
+    .message-content .flex-grow h1,
+    .message-content .flex-grow h2,
+    .message-content .flex-grow h3,
+    .message-content .flex-grow h4,
+    .message-content .flex-grow h5,
+    .message-content .flex-grow h6 {
+      margin-top: 1.5em;
+      margin-bottom: 0.5em;
+      font-weight: 600;
+      line-height: 1.25;
+    }
+    .message-content .flex-grow h1 { font-size: 1.5em; }
+    .message-content .flex-grow h2 { font-size: 1.25em; }
+    .message-content .flex-grow h3 { font-size: 1.125em; }
+    .message-content .flex-grow h4 { font-size: 1em; }
+    .message-content .flex-grow h5 { font-size: 0.875em; }
+    .message-content .flex-grow h6 { font-size: 0.75em; }
+
+    .message-content .flex-grow p {
+      margin-top: 0.5em;
+      margin-bottom: 0.5em;
+    }
+
+    .message-content .flex-grow ul,
+    .message-content .flex-grow ol {
+      margin-top: 0.5em;
+      margin-bottom: 0.5em;
+      padding-left: 2em;
+    }
+
+    .message-content .flex-grow li {
+      margin-top: 0.25em;
+      margin-bottom: 0.25em;
+    }
+
+    .message-content .flex-grow code {
+      background-color: rgba(75, 85, 99, 0.5);
+      padding: 0.2em 0.4em;
+      border-radius: 0.25em;
+      font-family: monospace;
+      font-size: 0.875em;
+    }
+
+    .message-content .flex-grow pre {
+      background-color: rgba(75, 85, 99, 0.5);
+      padding: 1em;
+      border-radius: 0.375em;
+      overflow-x: auto;
+      margin-top: 0.5em;
+      margin-bottom: 0.5em;
+    }
+
+    .message-content .flex-grow pre code {
+      background-color: transparent;
+      padding: 0;
+      border-radius: 0;
+    }
+
+    .message-content .flex-grow blockquote {
+      border-left: 4px solid #374151;
+      margin: 0.5em 0;
+      padding-left: 1em;
+      color: #9ca3af;
+    }
+
+    .message-content .flex-grow a {
+      color: #3b82f6;
+      text-decoration: underline;
+    }
+
+    .message-content .flex-grow a:hover {
+      color: #2563eb;
+    }
+
+    .message-content .flex-grow table {
+      border-collapse: collapse;
+      width: 100%;
+      margin-top: 0.5em;
+      margin-bottom: 0.5em;
+    }
+
+    .message-content .flex-grow th,
+    .message-content .flex-grow td {
+      border: 1px solid #374151;
+      padding: 0.5em;
+      text-align: left;
+    }
+
+    .message-content .flex-grow th {
+      background-color: rgba(75, 85, 99, 0.5);
+    }
+
+    .message-content .flex-grow img {
+      max-width: 100%;
+      height: auto;
+      margin-top: 0.5em;
+      margin-bottom: 0.5em;
+    }
+    @media (max-width: 768px) {
+      .main-content {
+        margin-left: 0;
+        top: 56px;
+      }
+      .main-content.with-canvas {
+        width: 100%;
+        flex: 1 1 0%;
+      }
+      #canvas-panel.open {
+        width: 100vw !important;
+        min-width: 0 !important;
+        max-width: 100vw !important;
+      }
+    }
+    .notification-button {
+      position: relative;
+      padding: 0.5rem;
+      color: #9ca3af;
+      transition: color 0.2s;
+    }
+    .notification-button:hover {
+      color: white;
+    }
+    .notification-badge {
+      position: absolute;
+      top: 0;
+      right: 0;
+      background-color: #ef4444;
+      color: white;
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 0.125rem 0.375rem;
+      border-radius: 9999px;
+      transform: translate(25%, -25%);
+    }
+    .gpt-name {
+      font-size: 0.75rem;
+      color: #9ca3af;
+      margin-bottom: 0.25rem;
+    }
+    .canvas-panel {
+      box-shadow: -4px 0 24px 0 rgba(0,0,0,0.25);
+      transition: width 0.2s cubic-bezier(0.4,0,0.2,1), right 0.3s;
+      overflow: hidden;
+    }
+    .splitter {
+      width: 6px;
+      background: linear-gradient(180deg, #6366f1 0%, #06b6d4 100%);
+      cursor: ew-resize;
+      user-select: none;
+      transition: background 0.2s;
+    }
+    .splitter:hover {
+      background: #6366f1;
+    }
+    @media (min-width: 1200px) {
+      #canvas-panel.open {
+        width: 50vw !important;
+        min-width: 250px;
+        max-width: 50vw !important;
+      }
+      .main-content.with-canvas {
+        width: 50vw !important;
+        max-width: 50vw !important;
+        flex: 0 0 50vw !important;
+      }
+    }
+    @media (min-width: 768px) and (max-width: 1199px) {
+      #canvas-panel.open {
+        width: 75vw !important;
+        min-width: 250px;
+        max-width: 75vw !important;
+      }
+      .main-content.with-canvas {
+        width: 25vw !important;
+        max-width: 25vw !important;
+        flex: 0 0 25vw !important;
+      }
+    }
+    @media (max-width: 767px) {
+      #canvas-panel.open {
+        width: 100vw !important;
+        min-width: 0 !important;
+        max-width: 100vw !important;
+      }
+      .main-content.with-canvas {
+        display: none !important;
+      }
+    }
+    #canvas-content {
+      width: 100%;
+      height: 100%;
+      box-sizing: border-box;
+    }
+
+    /* These styles ensure the form is always visible */
+    .chat-form-container {
+      display: block !important;
+      transition: width 0.3s ease;
+    }
+
+    /* Adjustments for canvas panel interactions */
+    .main-content.with-canvas .chat-form-container {
+      width: calc(100% - 6px); /* Account for splitter width */
+    }
+
+    /* Make sure the chat input is initially visible */
+    #chat-form {
+      display: flex !important;
+      flex-direction: column;
+    }
+  </style>
+</head>
+<body class="bg-gray-900 text-gray-100">
+  <!-- Top Bar for Chat Area -->
+  <div id="top-bar" class="w-full flex items-center justify-between px-4 py-3 bg-gray-900 border-b border-gray-700 fixed top-0 left-0 z-30" style="height:56px;">
+    <div class="flex items-center gap-2">
+      <span class="text-lg font-bold">Hexense</span>
+      <span id="current-gpt-package" class="text-sm text-gray-400 ml-2 cursor-pointer hover:text-white"></span>
+    </div>
+    <!-- Profil seçici ortada -->
+    <div class="flex-1 flex justify-center">
+      <select id="profile-selector" class="bg-gray-800 text-gray-100 border border-gray-700 rounded px-2 py-1 text-sm"></select>
+    </div>
+    <!-- Sağ taraf: canvas, görevler, mesajlar, avatar, username -->
+    <div class="flex items-center gap-3">
+      <button class="notification-button" title="Görevler">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+        </svg>
+        <span id="tasks-badge" class="notification-badge hidden">0</span>
+      </button>
+      <button class="notification-button" title="Mesajlar">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+        </svg>
+        <span id="messages-badge" class="notification-badge hidden">0</span>
+      </button>
+      <img id="user-avatar" src="{% static 'images/default-avatar.png' %}" class="w-8 h-8 rounded-full">
+      <div class="relative">
+        <button id="user-fullname" class="text-sm font-medium focus:outline-none flex items-center gap-1">
+          <span id="user-fullname-text"></span>
+          <svg class="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+        </button>
+        <div id="user-menu" class="absolute right-0 mt-2 w-48 bg-gray-800 border border-gray-700 rounded shadow-lg py-1 z-50 hidden">
+          <a href="#" class="block px-4 py-2 text-sm text-gray-200 hover:bg-gray-700" id="menu-profile">User Profile</a>
+          <a href="#" class="block px-4 py-2 text-sm text-gray-200 hover:bg-gray-700" id="menu-company">Company</a>
+          <a href="#" class="block px-4 py-2 text-sm text-gray-200 hover:bg-gray-700" id="menu-settings">Settings</a>
+          <a href="/logout/" class="block px-4 py-2 text-sm text-red-400 hover:bg-gray-700" id="menu-logout">Logout</a>
+        </div>
+      </div>
+      <button id="open-canvas-panel" class="text-gray-400 hover:text-white p-2 rounded-full">
+        <!-- Changed icon to a paint/canvas icon -->
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 20c4.418 0 8-3.582 8-8s-3.582-8-8-8-8 3.582-8 8c0 3.314 2.686 6 6 6h2a2 2 0 002-2v-2a2 2 0 00-2-2H8a2 2 0 00-2 2v2a2 2 0 002 2h2" />
+        </svg>
+      </button>
+
+    </div>
+  </div>
+
+  <div class="main-container pt-14">
+    <!-- Sidebar -->
+    <aside id="sidebar" class="sidebar sidebar-closed text-white flex flex-col transition-transform duration-300 ease-in-out z-40">
+      <div class="sidebar-content">
+        <div class="p-2">
+          <div id="gpt-package-list" class="conversation-list space-y-2">
+            <!-- GPT paketleri listelenecek -->
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Chat + Canvas Area -->
+    <div class="flex flex-1 h-full relative" id="main-flex-area">
+      <!-- Main Chat Area -->
+      <main id="main-content" class="main-content flex-1 min-w-0 flex flex-col">
+        <!-- Welcome Message (shown when no messages) -->
+        <div id="welcome-message" class="flex-grow flex flex-col items-center justify-center p-6 text-center">
+          <img src="{% static 'img/main_logo.png' %}" alt="Hexense Logo" class="w-40 h-43 mb-8">
+          <h1 class="text-3xl font-bold mb-4">Hexense'e Hoş Geldiniz</h1>
+          <p class="text-gray-400 max-w-md mb-8">Size nasıl yardımcı olabilirim? Aşağıdaki alana mesajınızı yazabilirsiniz.</p>
+        </div>
+
+        <!-- Chat Messages Area (shown when messages exist) -->
+        <div id="chat-container" class="chat-container">
+          <div id="chat-box" class="chat-messages">
+            <!-- Chat messages will appear here -->
+          </div>
+        </div>
+
+        <!-- Chat Input Form -->
+        <div class="chat-form-container">
+          <form id="chat-form" class="flex flex-col">
+            <div class="chat-input-container">
+              <textarea id="chat-message-input" class="chat-input" 
+                        placeholder="Bir mesaj yaz..." rows="1"></textarea>
+            </div>
+            <div class="flex justify-end">
+              <button type="submit" class="send-button">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                  <path fill-rule="evenodd" d="M5.293 7.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L6.707 7.707a1 1 0 01-1.414 0z" clip-rule="evenodd" />
+                </svg>
+              </button>
+            </div>
+          </form>
+          <div class="flex justify-start mt-2">
+            <button id="sidebar-new-chat" class="text-gray-400 hover:text-white p-2 rounded-full flex items-center gap-1">
+              <!-- New chat icon -->
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+              </svg>
+              <span class="text-sm">Yeni Sohbet</span>
+            </button>
+          </div>
+        </div>
+      </main>
+      <!-- Canvas Panel -->
+      <aside id="canvas-panel" class="canvas-panel hidden flex flex-col bg-gray-800 border-l border-gray-700 shadow-xl transition-all duration-300 ease-in-out" style="width: 400px; min-width: 250px; max-width: 700px; height: 100vh; position: relative;">
+        <div class="flex items-center justify-between px-4 py-2 border-b border-gray-700 bg-gray-900">
+          <span class="font-semibold text-lg text-indigo-400">Canvas Alanı</span>
+          <button id="close-canvas-panel" class="text-gray-400 hover:text-white p-2 rounded-full">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div class="flex-1 overflow-auto p-4" id="canvas-content">
+          <!-- Buraya dinamik olarak canvas veya özel UI render edilecek -->
+        </div>
+      </aside>
+    </div>
+  </div>
+
+
+  <script>
+    // Configure marked options
+    marked.setOptions({
+      breaks: true, // Enable line breaks
+      gfm: true, // Enable GitHub Flavored Markdown
+      headerIds: false, // Disable header IDs for security
+      mangle: false, // Disable mangling for security
+      sanitize: true, // Sanitize HTML for security
+    });
+
+    document.addEventListener('DOMContentLoaded', function() {
+      const sidebar = document.getElementById('sidebar');
+      const gptPackageList = document.getElementById('gpt-package-list');
+      const chatBox = document.getElementById('chat-box');
+      const welcomeMessage = document.getElementById('welcome-message');
+      const chatContainer = document.getElementById('chat-container');
+      const chatFormElement = document.getElementById('chat-form');
+      const chatMessageInput = document.getElementById('chat-message-input');
+      const currentGptPackageElement = document.getElementById('current-gpt-package');
+      const profileSelector = document.getElementById('profile-selector');
+      const userFullnameBtn = document.getElementById('user-fullname');
+      const userMenu = document.getElementById('user-menu');
+      let currentGptPackage = null;
+      let currentConversationId = null;
+      let profiles = [];
+      let currentProfileId = null;
+      let gptPackages = [];
+      let ws = null;
+      let wsConnected = false;
+      let wsUrl = (window.location.protocol === 'https:' ? 'wss://' : 'ws://') + window.location.host + '/ws/chat/';
+
+      // Sidebar should start hidden
+      sidebar.classList.add('sidebar-closed');
+      sidebar.classList.remove('sidebar-open');
+      chatFormElement.classList.remove('hidden');
+
+      // Function to get CSRF token from cookies
+      function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+          const cookies = document.cookie.split(';');
+          for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+              cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+              break;
+            }
+          }
+        }
+        return cookieValue;
+      }
+
+      // --- USER & PROFILE LOAD ---
+      async function loadUserInfoAndProfiles() {
+        try {
+          const response = await fetch('/api/auth/whoami/');
+          if (response.ok) {
+            const data = await response.json();
+            document.getElementById('user-fullname-text').textContent = data.full_name || data.username || '';
+            profiles = data.profiles || [];
+            // Profil seçici doldur
+            profileSelector.innerHTML = '';
+            let currentProfile = profiles.find(p => p.is_current) || profiles[0];
+            profiles.forEach(profile => {
+              const option = document.createElement('option');
+              option.value = profile.id;
+              option.textContent = profile.company?.name
+                ? `${profile.company.name} - ${profile.role?.name || ''}`
+                : profile.role?.name || 'Profil';
+              if (profile.is_current) {
+                option.selected = true;
+                currentProfileId = profile.id;
+              }
+              profileSelector.appendChild(option);
+            });
+            // Eğer currentProfileId yoksa ilk profili seç
+            if (!currentProfileId && profiles.length > 0) {
+              currentProfileId = profiles[0].id;
+            }
+            // Avatar güncelle
+            let currentProfileObj = profiles.find(p => p.id == currentProfileId);
+            if (currentProfileObj?.avatar) {
+              document.getElementById('user-avatar').src = currentProfileObj.avatar;
+            } else {
+              document.getElementById('user-avatar').src = "{% static 'images/default-avatar.png' %}";
+            }
+            // GPT paketlerini yükle
+            updateGptPackagesForProfile(currentProfileId);
+          }
+        } catch (error) {
+          console.error('Kullanıcı/profil bilgisi alınamadı:', error);
+        }
+      }
+
+      // --- GPT PACKAGE LOAD ---
+      function updateGptPackagesForProfile(profileId) {
+        const profile = profiles.find(p => p.id == profileId);
+        gptPackages = profile ? (profile.gpt_packages || []) : [];
+        displayGptPackages(gptPackages);
+        // Varsayılan paketi seç
+        const defaultPackage = gptPackages.find(pkg => pkg.is_default);
+        if (defaultPackage) {
+          setCurrentGptPackage(defaultPackage);
+        } else if (gptPackages.length > 0) {
+          setCurrentGptPackage(gptPackages[0]);
+        } else {
+          setCurrentGptPackage(null);
+        }
+      }
+
+      // --- GPT PACKAGE SIDEBAR ---
+      function displayGptPackages(packages) {
+        gptPackageList.innerHTML = '';
+        packages.forEach(pkg => {
+          const packageElement = document.createElement('div');
+          packageElement.className = 'conversation-item';
+          if (currentGptPackage && currentGptPackage.id === pkg.id) {
+            packageElement.classList.add('active');
+          }
+          packageElement.innerHTML = `
+            <div class="text-sm truncate">${pkg.name}</div>
+            <div class="text-xs text-gray-400">${pkg.group?.name || ''}</div>
+          `;
+          packageElement.addEventListener('click', () => {
+            setCurrentGptPackage(pkg);
+            sidebar.classList.remove('sidebar-open');
+            sidebar.classList.add('sidebar-closed');
+          });
+          gptPackageList.appendChild(packageElement);
+        });
+      }
+
+      // --- SET CURRENT GPT PACKAGE ---
+      function setCurrentGptPackage(pkg) {
+        currentGptPackage = pkg;
+        if (pkg) {
+          currentGptPackageElement.textContent = pkg.name;
+        } else {
+          currentGptPackageElement.textContent = '';
+        }
+        // Sidebar'da aktif paketi güncelle
+        const packageElements = gptPackageList.querySelectorAll('.conversation-item');
+        packageElements.forEach(el => {
+          el.classList.remove('active');
+        });
+        const currentElement = Array.from(packageElements).find(el => 
+          el.querySelector('.text-sm')?.textContent === (pkg ? pkg.name : '')
+        );
+        if (currentElement) {
+          currentElement.classList.add('active');
+        }
+        if (wsConnected && pkg) {
+          ws.send(JSON.stringify({type: 'gpt_package_change', gpt_package_id: pkg.id}));
+        }
+      }
+
+      // --- SIDEBAR TOGGLE ---
+      currentGptPackageElement.addEventListener('click', function(e) {
+        e.stopPropagation();
+        if (sidebar.classList.contains('sidebar-open')) {
+          sidebar.classList.remove('sidebar-open');
+          sidebar.classList.add('sidebar-closed');
+        } else {
+          sidebar.classList.add('sidebar-open');
+          sidebar.classList.remove('sidebar-closed');
+        }
+      });
+      document.addEventListener('click', function(e) {
+        const isClickInsideSidebar = sidebar.contains(e.target);
+        const isClickOnGptPackage = currentGptPackageElement.contains(e.target);
+        if (!isClickInsideSidebar && !isClickOnGptPackage && sidebar.classList.contains('sidebar-open')) {
+          sidebar.classList.remove('sidebar-open');
+          sidebar.classList.add('sidebar-closed');
+        }
+      });
+
+      // --- PROFILE SELECTOR CHANGE ---
+      profileSelector.addEventListener('change', function() {
+        currentProfileId = this.value;
+        let currentProfileObj = profiles.find(p => p.id == currentProfileId);
+        if (currentProfileObj?.avatar) {
+          document.getElementById('user-avatar').src = currentProfileObj.avatar;
+        } else {
+          document.getElementById('user-avatar').src = "{% static 'images/default-avatar.png' %}";
+        }
+        updateGptPackagesForProfile(currentProfileId);
+        currentConversationId = null;
+        chatBox.innerHTML = '';
+        welcomeMessage.classList.remove('hidden');
+        chatContainer.classList.add('hidden');
+        chatFormElement.classList.remove('hidden');
+        if (wsConnected) {
+          ws.send(JSON.stringify({type: 'profile_change', profile_id: currentProfileId}));
+        }
+      });
+
+      // --- CHAT ---
+      async function createNewConversation() {
+        if (wsConnected) {
+          ws.send(JSON.stringify({type: 'new_conversation'}));
+        }
+        chatBox.innerHTML = '';
+        welcomeMessage.classList.remove('hidden');
+        chatContainer.classList.add('hidden');
+        chatFormElement.classList.remove('hidden');
+        updateChatVisibility();
+      }
+
+      async function sendMessage(message) {
+        try {
+          addUserMessage(message);
+          showTypingIndicator();
+          if (wsConnected) {
+            ws.send(JSON.stringify({
+              type: 'chat_message',
+              message: message,
+              gpt_package_id: currentGptPackage ? currentGptPackage.id : null,
+              profile_id: currentProfileId ? currentProfileId : null
+            }));
+          } else {
+            removeTypingIndicator();
+            addAssistantMessage('WebSocket bağlantısı yok.');
+          }
+        } catch (error) {
+          console.error('Error sending message:', error);
+          removeTypingIndicator();
+          addAssistantMessage('Üzgünüm, bir hata oluştu. Lütfen tekrar deneyin.');
+        }
+      }
+
+      function updateChatVisibility() {
+        if (chatBox.children.length > 0) {
+          welcomeMessage.classList.add('hidden');
+          chatContainer.classList.remove('hidden');
+        } else {
+          welcomeMessage.classList.remove('hidden');
+          chatContainer.classList.add('hidden');
+        }
+        chatFormElement.classList.remove('hidden');
+      }
+
+      // Auto-resize textareas
+      const textareas = document.querySelectorAll('textarea');
+      textareas.forEach(textarea => {
+        textarea.addEventListener('input', function() {
+          this.style.height = 'auto';
+          this.style.height = (this.scrollHeight) + 'px';
+        });
+      });
+
+      document.getElementById('chat-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const message = document.getElementById('chat-message-input').value.trim();
+        if (message) {
+          sendMessage(message);
+          document.getElementById('chat-message-input').value = '';
+          document.getElementById('chat-message-input').style.height = 'auto';
+        }
+      });
+      document.getElementById('chat-message-input').addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          document.getElementById('chat-form').dispatchEvent(new Event('submit'));
+        }
+      });
+
+      function addUserMessage(message) {
+        const messageElement = document.createElement('div');
+        messageElement.className = 'message-container message-user';
+        const messageContent = document.createElement('div');
+        messageContent.className = 'message-content';
+        const text = document.createElement('div');
+        text.className = 'flex-grow';
+        text.textContent = message;
+        messageContent.appendChild(text);
+        messageElement.appendChild(messageContent);
+        chatBox.appendChild(messageElement);
+        scrollToBottom();
+        updateChatVisibility();
+      }
+      function addAssistantMessage(message) {
+        const messageElement = document.createElement('div');
+        messageElement.className = 'message-container message-assistant';
+        const messageContent = document.createElement('div');
+        messageContent.className = 'message-content';
+        if (currentGptPackage) {
+          const gptName = document.createElement('div');
+          gptName.className = 'gpt-name';
+          gptName.textContent = currentGptPackage.name;
+          messageContent.appendChild(gptName);
+        }
+        const text = document.createElement('div');
+        text.className = 'flex-grow';
+        text.innerHTML = marked.parse(message);
+        messageContent.appendChild(text);
+        messageElement.appendChild(messageContent);
+        chatBox.appendChild(messageElement);
+        scrollToBottom();
+      }
+      function showTypingIndicator() {
+        const indicatorElement = document.createElement('div');
+        indicatorElement.className = 'message-container message-assistant';
+        indicatorElement.id = 'typing-indicator';
+        const indicatorContent = document.createElement('div');
+        indicatorContent.className = 'message-content';
+        if (currentGptPackage) {
+          const gptName = document.createElement('div');
+          gptName.className = 'gpt-name';
+          gptName.textContent = currentGptPackage.name;
+          indicatorContent.appendChild(gptName);
+        }
+        const typing = document.createElement('div');
+        typing.className = 'typing-indicator';
+        typing.innerHTML = `
+          <div class="typing-dot"></div>
+          <div class="typing-dot"></div>
+          <div class="typing-dot"></div>
+        `;
+        indicatorContent.appendChild(typing);
+        indicatorElement.appendChild(indicatorContent);
+        chatBox.appendChild(indicatorElement);
+        scrollToBottom();
+      }
+      function removeTypingIndicator() {
+        const indicator = document.getElementById('typing-indicator');
+        if (indicator) {
+          indicator.remove();
+        }
+      }
+      function scrollToBottom() {
+        chatBox.scrollTop = chatBox.scrollHeight;
+      }
+      document.getElementById('sidebar-new-chat').addEventListener('click', createNewConversation);
+
+      // Bildirimler ve canvas panel kodları aynı şekilde kalabilir
+      // ... existing code ...
+      // Sayfa yüklendiğinde çağır
+      loadUserInfoAndProfiles();
+
+      document.getElementById('open-canvas-panel').addEventListener('click', function() {
+        document.getElementById('canvas-panel').classList.add('open');
+        document.getElementById('canvas-panel').classList.remove('hidden');
+      });
+      document.getElementById('close-canvas-panel').addEventListener('click', function() {
+        document.getElementById('canvas-panel').classList.remove('open');
+        document.getElementById('canvas-panel').classList.add('hidden');
+      });
+
+      // Username dropdown açma/kapama ve dışarı tıklama
+      userFullnameBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        userMenu.classList.toggle('hidden');
+      });
+      document.addEventListener('click', function(e) {
+        if (!userMenu.classList.contains('hidden')) {
+          if (!userMenu.contains(e.target) && e.target !== userFullnameBtn) {
+            userMenu.classList.add('hidden');
+          }
+        }
+      });
+
+      function connectWebSocket() {
+        ws = new WebSocket(wsUrl);
+        ws.onopen = function() {
+          wsConnected = true;
+          if (currentProfileId) {
+            ws.send(JSON.stringify({type: 'profile_change', profile_id: currentProfileId}));
+          }
+          if (currentGptPackage) {
+            ws.send(JSON.stringify({type: 'gpt_package_change', gpt_package_id: currentGptPackage.id}));
+          }
+        };
+        ws.onmessage = function(event) {
+          let data = {};
+          try { data = JSON.parse(event.data); } catch (e) { return; }
+          handleWebSocketMessage(data);
+        };
+        ws.onclose = function() {
+          wsConnected = false;
+          setTimeout(connectWebSocket, 2000);
+        };
+      }
+      connectWebSocket();
+
+      // WebSocket'ten gelen conversation_id sadece bilgi amaçlı kullanılabilir
+      function handleWebSocketMessage(data) {
+        if (data.type === 'chat_message_response') {
+          removeTypingIndicator();
+          addAssistantMessage(data.message);
+        } else if (data.type === 'connection') {
+          // Opsiyonel: bağlantı mesajı gösterilebilir
+        } else if (data.type === 'profile_change_ack') {
+          // Profil değişikliği onayı
+        } else if (data.type === 'gpt_package_change_ack') {
+          // GPT package değişikliği onayı
+        } else if (data.type === 'new_conversation_ack') {
+          // Yeni conversation_id geldi, istenirse UI'da gösterilebilir
+          // ör: console.log('Yeni conversation:', data.conversation_id);
+        } else if (data.type === 'error') {
+          removeTypingIndicator();
+          addAssistantMessage('Hata: ' + data.message);
+        }
+      }
+    });
+  </script>
+</body>
+</html>
