@@ -7,9 +7,9 @@ import uuid
 import logging # Logging ekleyelim
 from typing import List, Dict, Any, Optional
 from asgiref.sync import sync_to_async
-from .models import Conversation, Message, UserProfile, GptPackage
-from .semantic import find_best_gpt_package # Bu hala kullanılacak
-from .tools import run_tool # Araçları çalıştırmak için
+from hexense_core.models import Conversation, Message, UserProfile, GptPackage
+from hexense_core.semantic import find_best_gpt_package # Bu hala kullanılacak
+from hexense_core.utils import run_tool # Araçları çalıştırmak için
 from hexense_core import llm_dispatcher # Yeni dispatcher'ımızı import edelim
 
 

@@ -34,6 +34,7 @@ ALLOWED_HOSTS = []
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -43,8 +44,17 @@ INSTALLED_APPS = [
     'rest_framework',
     'hexense_core',
     'django_json_widget',
-    'channels',
 ]
+
+
+ASGI_APPLICATION = 'hexense_platform.asgi.application'
+
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer',
+    },
+}
+
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -74,7 +84,7 @@ TEMPLATES = [
     },
 ]
 
-#WSGI_APPLICATION = 'hexense_platform.wsgi.application'
+WSGI_APPLICATION = 'hexense_platform.wsgi.application'
 
 REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
@@ -86,6 +96,13 @@ REST_FRAMEWORK = {
         # (ileride TokenAuthentication veya JWT eklenebilir)
     ]
 }
+
+CSRF_TRUSTED_ORIGINS = [
+    "https://app.hexense.ai", # HTTPS kullandığınızdan emin olun
+    "http://localhost:8000", # Geliştirme için localhost'u da ekleyebilirsiniz
+    "http://127.0.0.1:8000", # Geliştirme için 127.0.0.1'i de ekleyebilirsiniz.
+    #... diğer izin verilen kaynaklar...
+]
 
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
@@ -150,10 +167,3 @@ STATIC_ROOT = os.path.join(BASE_DIR, 'static')  # collectstatic komutuyla toplan
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-ASGI_APPLICATION = 'hexense_platform.asgi.application'
-
-CHANNEL_LAYERS = {
-    'default': {
-        'BACKEND': 'channels.layers.InMemoryChannelLayer',
-    },
-}

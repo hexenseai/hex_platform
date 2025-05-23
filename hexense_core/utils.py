@@ -1,12 +1,11 @@
 import uuid
 import os
-f# hexense_core/utils.py
+# hexense_core/utils.py
 # def run_tool(function_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
 # Şöyle olmalı (eğer UserProfile gerekiyorsa):
-from .models import UserProfile # Gerekirse import edin
 from typing import Any, Dict, Optional
 
-def run_tool(function_name: str, args: Dict[str, Any], user_profile: Optional[UserProfile] = None) -> Dict[str, Any]:
+def run_tool(function_name: str, args: Dict[str, Any], user_profile = None) -> Dict[str, Any]:
     import hexense_core.tools as tools 
     func = getattr(tools, function_name, None)
 
