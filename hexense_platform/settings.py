@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+REACT_APP_DIR = os.path.join(BASE_DIR, 'frontend')
 
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
@@ -41,6 +42,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'corsheaders',
     'rest_framework',
     'hexense_core',
     'django_json_widget',
@@ -57,6 +59,7 @@ CHANNEL_LAYERS = {
 
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -71,7 +74,7 @@ ROOT_URLCONF = 'hexense_platform.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [os.path.join(REACT_APP_DIR, 'dist')],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -103,6 +106,12 @@ CSRF_TRUSTED_ORIGINS = [
     "http://127.0.0.1:8000", # Geliştirme için 127.0.0.1'i de ekleyebilirsiniz.
     #... diğer izin verilen kaynaklar...
 ]
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173", # React geliştirme sunucunuzun adresi
+    "http://127.0.0.1:5173",
+]
+CORS_ALLOW_CREDENTIALS = True 
 
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
@@ -156,8 +165,11 @@ MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 STATIC_URL = '/static/'
-STATIC_DIRS = [
-    os.path.join(BASE_DIR, 'static'),   # Proje içinde ortak static dosyalar
+STATICFILES_DIRS = [
+    os.path.join(REACT_APP_DIR, 'dist'), # Vite için varsayılan build klasörü
+    # os.path.join(REACT_APP_DIR, 'build'), # Create React App için varsayılan build klasörü
+    # Projenizin kendi ana static klasörü varsa onu da buraya ekleyebilirsiniz:
+    os.path.join(BASE_DIR, 'static'),
 ]
 STATIC_ROOT = os.path.join(BASE_DIR, 'static')  # collectstatic komutuyla toplanacak klasör
 

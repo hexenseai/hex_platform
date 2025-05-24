@@ -88,17 +88,28 @@ def process_model_response_text_for_ui(text: str) -> str:
 
 def get_gpt_package_services(gpt_package: GptPackage) -> List[Dict[str, Any]]:
     tools = []
-    if not hasattr(gpt_package, 'services') or not hasattr(gpt_package.services, 'filter'):
-        logger.warning(f"GptPackage {gpt_package.name} does not have 'services' or it's not a valid manager.")
-        return tools
-
+    # GptPackage.services ManyToManyField olduğu için .all() ile QuerySet alınır.
+    # Eğer ChatConsumer'da prefetch_related('services') yapıldıysa,
+    # aşağıdaki .filter() ve iterasyon DB'ye gitmemeli.
     try:
-        for service in gpt_package.services.filter(is_active=True):
+        # prefetch_related ile geldiği için gpt_package.services.all() zaten listedir.
+        # .filter(is_active=True) bu liste üzerinde değil, yeni bir DB sorgusu yapmaya çalışabilir.
+        # Bu yüzden prefetch edilmiş QuerySet üzerinde Python ile filtreleme yapmak daha güvenli olabilir.
+        
+        # Güvenli Yöntem: Python ile filtreleme
+        active_services = [s for s in gpt_package.services.all() if s.is_active] # .all() prefetch edilmiş veriyi kullanır
+        
+        # VEYA eğer .filter()'ın prefetch'i bozmadığından eminsek (Django versiyonuna göre değişebilir):
+        # active_services = gpt_package.services.filter(is_active=True) 
+        # Bu satır hala sorun yaratıyorsa, yukarıdaki Python list comprehension'ı kullanılmalı.
+
+        for service in active_services: # Python listesi üzerinde iterasyon
+            # ... (geri kalan tool oluşturma mantığı aynı)
             properties = {}
             required_params = []
             if isinstance(service.input_schema, dict):
                 for param_name, schema_info in service.input_schema.items():
-                    if not isinstance(schema_info, dict):
+                    if not isinstance(schema_info, dict): 
                         logger.warning(f"Invalid schema_info for param {param_name} in service {service.key}. Expected dict, got {type(schema_info)}")
                         continue
 
@@ -127,7 +138,6 @@ def get_gpt_package_services(gpt_package: GptPackage) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"Error processing services for GptPackage {gpt_package.name}: {e}", exc_info=True)
     return tools
-
 
 async def build_system_prompt(user_profile: UserProfile, gpt_package: GptPackage, provider: Optional[str] = None) -> str:
     username = user_profile.user.get_full_name() or user_profile.user.username

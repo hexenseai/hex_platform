@@ -312,7 +312,7 @@ class GptService(models.Model):
     name = models.CharField(max_length=150)
     description = models.TextField()
 
-    input_schema = models.JSONField(help_text="Beklenen parametreler ve açıklamaları", default=dict)
+    input_schema = models.JSONField(help_text="Beklenen parametreler ve açıklamaları", blank=True, default=dict)
     output_schema = models.JSONField(blank=True, null=True, help_text="Yanıt formatı (isteğe bağlı)")
 
     function_name = models.CharField(

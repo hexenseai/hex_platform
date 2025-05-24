@@ -64,7 +64,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     return
                 try:
                     # UserProfile'ı user ile birlikte sorgula güvenlik için
-                    self.user_profile = await UserProfile.objects.select_related('company', 'role', 'department').aget(id=profile_id, user=self.user)
+                    self.user_profile = await UserProfile.objects.select_related('user', 'company', 'role', 'department').aget(id=profile_id, user=self.user)
                     logger.info(f"User {self.user.username} changed profile to {self.user_profile.id} ({self.user_profile.role.name if self.user_profile.role else 'No Role'})")
                     # Yeni profil seçildiğinde, mevcut konuşmayı ve gpt paketini sıfırlayabiliriz
                     # veya frontend'in yeni bir gpt_package_change göndermesini bekleyebiliriz.
@@ -91,7 +91,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 try:
                     # GPT paketinin seçilen role için uygun olup olmadığını kontrol edebiliriz.
                     # Şimdilik doğrudan ID ile alıyoruz.
-                    self.gpt_package = await GptPackage.objects.select_related('model').aget(id=gpt_package_id)
+                    self.gpt_package = await GptPackage.objects.prefetch_related('services').select_related('model').aget(id=gpt_package_id)
                     # GptPackage'ın gerçekten kullanıcının rolüyle ilişkili olup olmadığını kontrol et
                     # if self.user_profile.role not in self.gpt_package.allowed_roles.all(): ...
                     logger.info(f"User {self.user.username} (Profile: {self.user_profile.id}) changed GptPackage to {self.gpt_package.name}")
@@ -131,7 +131,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
                 # Eğer aktif bir konuşma yoksa veya GPT paketi değiştiyse,
                 # uygun bir konuşma bul veya oluştur.
-                if not self.conversation or (self.conversation.gpt_package != self.gpt_package):
+                if not self.conversation:
                     self.conversation = await self.get_or_create_conversation_for_gpt_package()
 
                 # Dinamik GPT paketi değiştirme mantığı (opsiyonel, şimdilik devre dışı bırakılabilir)
@@ -177,8 +177,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
         if force_new:
             conv = await Conversation.objects.acreate(
-                user_profile=self.user_profile,
-                gpt_package=self.gpt_package,
+                user_profile=self.user_profile
                 # topic ve topic_embedding başlangıçta boş olabilir veya ilk mesajdan sonra güncellenebilir.
             )
             logger.info(f"Forced new conversation {conv.id} for UserProfile {self.user_profile.id} and GptPackage {self.gpt_package.name}")
@@ -188,14 +187,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
         # Bu mantık, kullanıcının aynı paketle devam ettiği sürece aynı konuşmada kalmasını sağlar.
         # Daha karmaşık "context switching" için bu kısım geliştirilebilir.
         conv = await Conversation.objects.filter(
-            user_profile=self.user_profile,
-            gpt_package=self.gpt_package
+            user_profile=self.user_profile
         ).order_by('-updated_at').afirst()
 
         if not conv:
             conv = await Conversation.objects.acreate(
-                user_profile=self.user_profile,
-                gpt_package=self.gpt_package
+                user_profile=self.user_profile
             )
             logger.info(f"Created new conversation {conv.id} for UserProfile {self.user_profile.id} and GptPackage {self.gpt_package.name}")
         else:
@@ -344,14 +341,26 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     
                     try:
                         tool_args_dict = json.loads(tool_args_str)
+                        function_name = "call_service"
+                        # GptPackage üzerinden servislere ulaş
+                        if self.gpt_package:
+                            for service in self.gpt_package.services.all():
+                                if service.key == tool_name and service.is_active and service.default_params:
+                                    # Default parametreleri tool_args_dict ile birleştir
+                                    # default_params öncelikli olmasın diye önce onu kopyalayıp üzerine tool_args_dict yazıyoruz
+                                    merged_args = service.default_params.copy()
+                                    merged_args.update(tool_args_dict)
+                                    function_name = service.function_name
+                                    tool_args_dict = merged_args
+                                    break
+                        else:
+                            print(f"GptPackage not found for tool {tool_name}")
+                            logger.error(f"GptPackage not found for tool {tool_name}")
+
                         logger.info(f"Executing tool: {tool_name} with args: {tool_args_dict}")
-                        # `run_tool` fonksiyonu UserProfile bekliyordu, güncelleyelim.
-                        # `run_tool`'un `user_profile` parametresini alacak şekilde güncellenmesi gerekebilir.
-                        # `hexense_core/utils.py` içindeki `run_tool`'a `user_profile` eklenmeli.
-                        # Şimdilik `run_tool`'un `user_profile` aldığını varsayıyorum.
-                        result = await sync_to_async(run_tool)(tool_name, tool_args_dict, user_profile=self.user_profile)
+                        result = await sync_to_async(run_tool)(function_name, tool_name, tool_args_dict, user_profile=self.user_profile)
                         tool_execution_results.append({
-                            "role": "tool",
+                            "role": "tool", 
                             "tool_call_id": tool_call_id,
                             "name": tool_name,
                             "content": json.dumps(result) # Araç sonucu JSON string olmalı

@@ -555,6 +555,18 @@
       let ws = null;
       let wsConnected = false;
       let wsUrl = (window.location.protocol === 'https:' ? 'wss://' : 'ws://') + window.location.host + '/ws/chat/';
+      let wsSendQueue = [];
+      let pendingProfileId = null;
+      let waitingProfileAck = false;
+      let pendingGptPackageId = null;
+      let userAndProfilesLoaded = false;
+      let wsReady = false;
+      let initialProfileChangeSent = false;
+      let streamingAssistantMessageBuffer = '';
+      let streamingAssistantMessageElement = null;
+      let streamingAssistantMessageContent = null;
+      let streamingAssistantMessageTextDiv = null;
+      let streamingInProgress = false;
 
       // Sidebar should start hidden
       sidebar.classList.add('sidebar-closed');
@@ -613,6 +625,8 @@
             }
             // GPT paketlerini yükle
             updateGptPackagesForProfile(currentProfileId);
+            userAndProfilesLoaded = true;
+            trySendInitialProfileChange();
           }
         } catch (error) {
           console.error('Kullanıcı/profil bilgisi alınamadı:', error);
@@ -658,6 +672,22 @@
       }
 
       // --- SET CURRENT GPT PACKAGE ---
+      function sendProfileChange(profileId) {
+        if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({type: 'profile_change', profile_id: profileId}));
+          waitingProfileAck = true;
+        } else {
+          wsSendQueue.push({type: 'profile_change', profile_id: profileId});
+          waitingProfileAck = true;
+        }
+      }
+      function sendGptPackageChange(gptPackageId) {
+        if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({type: 'gpt_package_change', gpt_package_id: gptPackageId}));
+        } else {
+          wsSendQueue.push({type: 'gpt_package_change', gpt_package_id: gptPackageId});
+        }
+      }
       function setCurrentGptPackage(pkg) {
         currentGptPackage = pkg;
         if (pkg) {
@@ -676,8 +706,11 @@
         if (currentElement) {
           currentElement.classList.add('active');
         }
-        if (wsConnected && pkg) {
-          ws.send(JSON.stringify({type: 'gpt_package_change', gpt_package_id: pkg.id}));
+        // GPT package değişikliği profile_change_ack gelmeden gönderilmemeli
+        if (waitingProfileAck) {
+          pendingGptPackageId = pkg ? pkg.id : null;
+        } else if (pkg) {
+          sendGptPackageChange(pkg.id);
         }
       }
 
@@ -716,8 +749,15 @@
         welcomeMessage.classList.remove('hidden');
         chatContainer.classList.add('hidden');
         chatFormElement.classList.remove('hidden');
-        if (wsConnected) {
-          ws.send(JSON.stringify({type: 'profile_change', profile_id: currentProfileId}));
+        // Profil değişikliğinde önce profile_change gönder, ack gelince gpt_package_change gönderilecek
+        if (wsConnected && wsReady) {
+          sendProfileChange(currentProfileId);
+          pendingGptPackageId = currentGptPackage ? currentGptPackage.id : null;
+        } else {
+          // Bağlantı yoksa profile_change kuyruğa alınır, ilk açılışta zaten trySendInitialProfileChange ile gönderilecek
+          wsSendQueue.push({type: 'profile_change', profile_id: currentProfileId});
+          waitingProfileAck = true;
+          pendingGptPackageId = currentGptPackage ? currentGptPackage.id : null;
         }
       });
 
@@ -886,16 +926,29 @@
         }
       });
 
+      function trySendInitialProfileChange() {
+        if (userAndProfilesLoaded && wsReady && !initialProfileChangeSent && currentProfileId) {
+          sendProfileChange(currentProfileId);
+          pendingGptPackageId = currentGptPackage ? currentGptPackage.id : null;
+          initialProfileChangeSent = true;
+        }
+      }
+
       function connectWebSocket() {
         ws = new WebSocket(wsUrl);
         ws.onopen = function() {
           wsConnected = true;
-          if (currentProfileId) {
-            ws.send(JSON.stringify({type: 'profile_change', profile_id: currentProfileId}));
-          }
-          if (currentGptPackage) {
-            ws.send(JSON.stringify({type: 'gpt_package_change', gpt_package_id: currentGptPackage.id}));
-          }
+          wsReady = true;
+          trySendInitialProfileChange();
+          // Kuyruktaki diğer mesajları profile_change ve gpt_package_change haricinde gönder
+          wsSendQueue = wsSendQueue.filter(msg => {
+            if (msg.type === 'profile_change' || msg.type === 'gpt_package_change') {
+              return false;
+            } else {
+              ws.send(JSON.stringify(msg));
+              return false;
+            }
+          });
         };
         ws.onmessage = function(event) {
           let data = {};
@@ -904,6 +957,9 @@
         };
         ws.onclose = function() {
           wsConnected = false;
+          wsReady = false;
+          initialProfileChangeSent = false;
+          waitingProfileAck = false;
           setTimeout(connectWebSocket, 2000);
         };
       }
@@ -914,19 +970,77 @@
         if (data.type === 'chat_message_response') {
           removeTypingIndicator();
           addAssistantMessage(data.message);
+        } else if (data.type === 'assistant_message_chunk') {
+          addStreamingAssistantMessageChunk(data.chunk);
+        } else if (data.type === 'assistant_stream_finalized') {
+          finalizeStreamingAssistantMessage();
         } else if (data.type === 'connection') {
           // Opsiyonel: bağlantı mesajı gösterilebilir
         } else if (data.type === 'profile_change_ack') {
-          // Profil değişikliği onayı
+          // Profil değişikliği onayı geldi, şimdi gpt_package_change gönder
+          waitingProfileAck = false;
+          if (pendingGptPackageId) {
+            sendGptPackageChange(pendingGptPackageId);
+            pendingGptPackageId = null;
+          }
         } else if (data.type === 'gpt_package_change_ack') {
           // GPT package değişikliği onayı
+        } else if (data.type === 'gpt_package_change') {
+          // Sunucudan gpt_package_change mesajı gelirse frontend'de de değiştir
+          const pkg = gptPackages.find(p => p.id == data.gpt_package_id);
+          if (pkg) {
+            setCurrentGptPackage(pkg);
+          }
         } else if (data.type === 'new_conversation_ack') {
           // Yeni conversation_id geldi, istenirse UI'da gösterilebilir
-          // ör: console.log('Yeni conversation:', data.conversation_id);
         } else if (data.type === 'error') {
           removeTypingIndicator();
           addAssistantMessage('Hata: ' + data.message);
         }
+      }
+
+      function addStreamingAssistantMessageChunk(chunk) {
+        if (!streamingInProgress) {
+          // Start a new streaming message
+          streamingAssistantMessageElement = document.createElement('div');
+          streamingAssistantMessageElement.className = 'message-container message-assistant';
+          streamingAssistantMessageContent = document.createElement('div');
+          streamingAssistantMessageContent.className = 'message-content';
+          if (currentGptPackage) {
+            const gptName = document.createElement('div');
+            gptName.className = 'gpt-name';
+            gptName.textContent = currentGptPackage.name;
+            streamingAssistantMessageContent.appendChild(gptName);
+          }
+          streamingAssistantMessageTextDiv = document.createElement('div');
+          streamingAssistantMessageTextDiv.className = 'flex-grow';
+          streamingAssistantMessageContent.appendChild(streamingAssistantMessageTextDiv);
+          streamingAssistantMessageElement.appendChild(streamingAssistantMessageContent);
+          chatBox.appendChild(streamingAssistantMessageElement);
+          streamingAssistantMessageBuffer = '';
+          streamingInProgress = true;
+          removeTypingIndicator();
+        }
+        streamingAssistantMessageBuffer += chunk;
+        // Show as plain text while streaming for performance, or use marked.parse for live markdown
+        streamingAssistantMessageTextDiv.innerHTML = marked.parse(streamingAssistantMessageBuffer);
+        scrollToBottom();
+        updateChatVisibility();
+      }
+
+      function finalizeStreamingAssistantMessage() {
+        if (streamingInProgress && streamingAssistantMessageTextDiv) {
+          // Finalize the message (parse markdown one last time)
+          streamingAssistantMessageTextDiv.innerHTML = marked.parse(streamingAssistantMessageBuffer);
+        }
+        streamingAssistantMessageBuffer = '';
+        streamingAssistantMessageElement = null;
+        streamingAssistantMessageContent = null;
+        streamingAssistantMessageTextDiv = null;
+        streamingInProgress = false;
+        removeTypingIndicator();
+        scrollToBottom();
+        updateChatVisibility();
       }
     });
   </script>

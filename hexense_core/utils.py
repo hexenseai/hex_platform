@@ -5,7 +5,8 @@ import os
 # Şöyle olmalı (eğer UserProfile gerekiyorsa):
 from typing import Any, Dict, Optional
 
-def run_tool(function_name: str, args: Dict[str, Any], user_profile = None) -> Dict[str, Any]:
+def run_tool(function_name: str, tool_name: str, args: Dict[str, Any], user_profile = None) -> Dict[str, Any]:
+    print(f"run_tool: {function_name} {args} {user_profile}")
     import hexense_core.tools as tools 
     func = getattr(tools, function_name, None)
 
