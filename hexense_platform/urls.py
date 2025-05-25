@@ -3,7 +3,7 @@ from django.views.generic import TemplateView
 from django.conf import settings # Statik dosya sunumu için
 from django.conf.urls.static import static # Statik dosya sunumu için
 from django.contrib import admin
-from hexense_core.views import LoginView, LogoutView, WhoAmIView # Bunları burada import edin
+from hexense_core.views import LoginView, LogoutView, WhoAmIView, RegisterView # Bunları burada import edin
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -13,7 +13,7 @@ urlpatterns = [
     path('api/auth/login/', LoginView.as_view(), name='api_login'),
     path('api/auth/logout/', LogoutView.as_view(), name='api_logout'),
     path('api/auth/whoami/', WhoAmIView.as_view(), name='api_whoami'),
-
+    path('api/auth/register/', RegisterView.as_view(), name='api_register'),
     # React uygulamasının ana HTML dosyasını sunacak catch-all route
     # Bu, API, admin, static ve media URL'leri dışındaki tüm istekleri yakalar.
     re_path(r'^(?!api/|admin/|static/|media/).*$', TemplateView.as_view(template_name="index.html")),

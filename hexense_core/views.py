@@ -11,6 +11,8 @@ from rest_framework.permissions import IsAuthenticated
 from hexense_core.llm_dispatcher import call_model
 from sentence_transformers import SentenceTransformer
 import numpy as np
+from django.contrib.auth.models import User
+from django.db import transaction
 
 
 class LoginView(APIView):
@@ -85,3 +87,29 @@ class UserProfileView(APIView):
                 {"error": "Profil bulunamadı"}, 
                 status=status.HTTP_404_NOT_FOUND
             )
+
+
+class RegisterView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    @transaction.atomic
+    def post(self, request):
+        first_name = request.data.get('first_name')
+        last_name = request.data.get('last_name')
+        email = request.data.get('email')
+        password = request.data.get('password')
+        if not all([first_name, last_name, email, password]):
+            return Response({'error': 'Tüm alanlar zorunludur.'}, status=status.HTTP_400_BAD_REQUEST)
+        if User.objects.filter(username=email).exists():
+            return Response({'error': 'Bu e-posta ile zaten bir kullanıcı var.'}, status=status.HTTP_400_BAD_REQUEST)
+        user = User.objects.create_user(username=email, email=email, password=password, first_name=first_name, last_name=last_name)
+        # Hexense AI şirketini bul veya oluştur
+        company, _ = Company.objects.get_or_create(name='Hexense AI', defaults={'description': 'Default company for all users'})
+        # İş departmanını bul veya oluştur
+        department, _ = Department.objects.get_or_create(name='Müşteri', company=company, defaults={'description': 'Varsayılan iş departmanı'})
+        # Misafir rolünü bul veya oluştur
+        role, _ = Role.objects.get_or_create(name='Misafir', company=company, department=department, defaults={'description': 'Varsayılan misafir rolü'})
+
+        # Profil oluştur
+        profile = UserProfile.objects.create(user=user, company=company, department=department, role=role, is_current=True)
+        return Response({'message': 'Kayıt başarılı.'}, status=status.HTTP_201_CREATED)

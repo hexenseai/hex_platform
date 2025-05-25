@@ -44,6 +44,8 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
+    'rest_framework_simplejwt',
+    'rest_framework_simplejwt.token_blacklist',
     'hexense_core',
     'django_json_widget',
 ]
@@ -169,7 +171,7 @@ STATICFILES_DIRS = [
     os.path.join(REACT_APP_DIR, 'dist'), # Vite için varsayılan build klasörü
     # os.path.join(REACT_APP_DIR, 'build'), # Create React App için varsayılan build klasörü
     # Projenizin kendi ana static klasörü varsa onu da buraya ekleyebilirsiniz:
-    os.path.join(BASE_DIR, 'static'),
+    #os.path.join(BASE_DIR, 'static'),
 ]
 STATIC_ROOT = os.path.join(BASE_DIR, 'static')  # collectstatic komutuyla toplanacak klasör
 

@@ -43,6 +43,8 @@ marked.setOptions({
 
 
 const ChatPage: React.FC = () => {
+  const API_HOST = import.meta.env.VITE_APP_API_HOST;
+  const API_WS_HOST = import.meta.env.VITE_APP_API_WS_HOST;
   const [collapsed, setCollapsed] = useState<boolean>(false);
   const [userProfiles, setUserProfiles] = useState<UserProfileOption[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
@@ -74,7 +76,7 @@ const ChatPage: React.FC = () => {
   // --- WebSocket Yönetimi ---
   const connectWebSocket = useCallback(() => {
     console.log("Attempting to connect WebSocket...");
-    const wsUrl = (window.location.protocol === 'https:' ? 'wss://' : 'ws://') + window.location.host + '/ws/chat/';
+    const wsUrl = API_WS_HOST + '/ws/chat/';
     const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
@@ -238,7 +240,7 @@ const ChatPage: React.FC = () => {
     const fetchWhoAmI = async () => {
       setLoadingWhoAmI(true);
       try {
-        const response = await fetch('/api/auth/whoami/');
+        const response = await fetch(`${API_HOST}/api/auth/whoami/`);
         if (!response.ok) {
           if (response.status === 401 || response.status === 403) {
             window.location.href = '/login';
@@ -399,7 +401,7 @@ const ChatPage: React.FC = () => {
 
   const handleLogout = async () => {
     try {
-      const response = await fetch('/api/auth/logout/', { 
+      const response = await fetch(`${API_HOST}/api/auth/logout/`, { 
           method: 'POST',
           headers: {
             // CSRF token gerekebilir, Django'nun SessionAuthentication'ı için
@@ -441,7 +443,20 @@ const ChatPage: React.FC = () => {
   return (
     <AntApp> {/* Ant Design message, notification, modal için context sağlar */}
       <Layout style={{ minHeight: '100vh' }}>
-        <Header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 16px', background: '#fff', borderBottom: '1px solid #f0f0f0', position: 'fixed', zIndex: 1, width: '100%' }}>
+        <Header
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0 32px',
+            background: '#fff',
+            borderBottom: '1px solid #f0f0f0',
+            position: 'fixed',
+            zIndex: 1,
+            width: '100%',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+          }}
+        >
           <div style={{ display: 'flex', alignItems: 'center' }}>
             <Button
               type="text"
@@ -481,7 +496,23 @@ const ChatPage: React.FC = () => {
           </Space>
         </Header>
         <Layout style={{ paddingTop: 64 }}> {/* Header yüksekliği kadar padding */}
-          <Sider collapsible collapsed={collapsed} onCollapse={(value) => setCollapsed(value)} theme="light" style={{ borderRight: '1px solid #f0f0f0', height: 'calc(100vh - 64px)', position: 'fixed', left: 0, top: 64, bottom: 0, overflowY: 'auto' }}>
+          <Sider
+            collapsible
+            collapsed={collapsed}
+            onCollapse={(value) => setCollapsed(value)}
+            theme="light"
+            style={{
+              borderRight: '1px solid #f0f0f0',
+              height: 'calc(100vh - 64px)',
+              position: 'fixed',
+              left: 0,
+              top: 64,
+              bottom: 0,
+              overflowY: 'auto',
+              background: '#f7f8fc',
+              boxShadow: '2px 0 8px rgba(0,0,0,0.03)',
+            }}
+          >
             <Button type="primary" icon={<PlusOutlined />} style={{ margin: '16px auto', display: 'block', width: collapsed ? 'auto' : 'calc(100% - 32px)' }} block={!collapsed} onClick={handleNewChat}>
               {!collapsed && 'Yeni Sohbet'}
             </Button>
@@ -493,7 +524,7 @@ const ChatPage: React.FC = () => {
               items={gptPackages.length > 0 ? gptPackages : [{key: 'no-package', label: 'Paket Yok', disabled: true, icon: <ExperimentOutlined/>}]}
             />
           </Sider>
-          <Layout style={{ marginLeft: collapsed ? 80 : 200, transition: 'margin-left 0.2s', display: 'flex', flexDirection: 'column', height: 'calc(100vh - 64px)' }}> {/* Sidebar genişliğine göre margin */}
+          <Layout style={{ marginLeft: collapsed ? 80 : 200, transition: 'margin-left 0.2s', display: 'flex', flexDirection: 'column', height: 'calc(100vh - 64px)', width: '100%' }}> {/* Sidebar genişliğine göre margin */}
             <Content
               style={{
                 padding: '24px',
@@ -506,6 +537,14 @@ const ChatPage: React.FC = () => {
               }}
             >
               <div ref={chatBoxRef} style={{ flexGrow: 1, background: '#fff', border: '1px solid #e8e8e8', borderRadius: 8, padding: 16, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px' }} id="chat-box-react">
+                {(selectedGptPackage || gptPackages.length === 0) && (
+                  <Alert
+                    message="Lütfen önce bir GPT paketi seçin."
+                    type="warning"
+                    showIcon
+                    style={{ marginBottom: 16 }}
+                  />
+                )}
                 {messages.length === 0 && !showTypingIndicator && (
                     <div style={{textAlign: 'center', margin: 'auto', color: '#aaa'}}>
                         <MessageOutlined style={{fontSize: 48, marginBottom: 16}}/>
@@ -514,14 +553,22 @@ const ChatPage: React.FC = () => {
                 )}
                 {messages.map((msg) => (
                   <div key={msg.id} style={{ alignSelf: msg.sender === 'user' ? 'flex-end' : 'flex-start', maxWidth: '70%' }}>
-                    <div style={{
-                        padding: '8px 12px',
-                        borderRadius: '12px',
-                        background: msg.sender === 'user' ? '#1890ff' : '#e8e8e8',
-                        color: msg.sender === 'user' ? 'white' : 'black',
-                        borderBottomLeftRadius: msg.sender === 'assistant' ? '0px' : '12px',
-                        borderBottomRightRadius: msg.sender === 'user' ? '0px' : '12px',
-                    }}>
+                    <div
+                      style={{
+                        padding: '12px 18px',
+                        borderRadius: msg.sender === 'user' ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
+                        background: msg.sender === 'user'
+                          ? 'linear-gradient(90deg, #4f8cff 0%, #3358ff 100%)'
+                          : '#f0f2f5',
+                        color: msg.sender === 'user' ? 'white' : '#222',
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+                        marginBottom: 8,
+                        maxWidth: '75%',
+                        alignSelf: msg.sender === 'user' ? 'flex-end' : 'flex-start',
+                        fontSize: 16,
+                        lineHeight: 1.6,
+                      }}
+                    >
                       {msg.sender === 'assistant' && msg.gptPackageName && (
                         <Text type="secondary" style={{ fontSize: '0.75rem', display: 'block', marginBottom: 4 }}>
                           {msg.gptPackageName}
@@ -552,27 +599,51 @@ const ChatPage: React.FC = () => {
                 )}
               </div>
               <div style={{ marginTop: 16, padding: '16px', background: '#fff', border: '1px solid #e8e8e8', borderRadius: 8}} id="message-input-react">
-                <Space.Compact style={{ width: '100%' }}>
-                    <Input.TextArea
-                        placeholder="Bir mesaj yazın..."
-                        autoSize={{ minRows: 1, maxRows: 5 }}
-                        value={currentMessageInput}
-                        onChange={handleMessageInputChange}
-                        onPressEnter={(e) => {
-                        if (!e.shiftKey) {
-                            e.preventDefault();
-                            handleSendMessage();
-                        }
-                        }}
-                        disabled={isSendingMessage || !wsConnected || !selectedGptPackage}
-                    />
-                    <Button
-                        type="primary"
-                        icon={<SendOutlined />}
-                        onClick={handleSendMessage}
-                        loading={isSendingMessage}
-                        disabled={!currentMessageInput.trim() || !wsConnected || !selectedGptPackage}
-                    />
+                <Space.Compact
+                  style={{
+                    width: '100%',
+                    background: '#fff',
+                    borderRadius: 16,
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+                    padding: 4,
+                  }}
+                >
+                  <Input.TextArea
+                    placeholder="Bir mesaj yazın..."
+                    autoSize={{ minRows: 1, maxRows: 5 }}
+                    value={currentMessageInput}
+                    onChange={handleMessageInputChange}
+                    onPressEnter={(e) => {
+                      if (!e.shiftKey) {
+                        e.preventDefault();
+                        handleSendMessage();
+                      }
+                    }}
+                    disabled={isSendingMessage || !wsConnected || !selectedGptPackage}
+                    style={{
+                      border: 'none',
+                      borderRadius: 16,
+                      fontSize: 16,
+                      background: 'transparent',
+                      resize: 'none',
+                      boxShadow: 'none',
+                    }}
+                  />
+                  <Button
+                    type="primary"
+                    icon={<SendOutlined />}
+                    onClick={handleSendMessage}
+                    loading={isSendingMessage}
+                    disabled={!currentMessageInput.trim() || !wsConnected || !selectedGptPackage}
+                    style={{
+                      borderRadius: 16,
+                      marginLeft: 8,
+                      height: 48,
+                      width: 48,
+                      fontSize: 20,
+                      boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+                    }}
+                  />
                 </Space.Compact>
               </div>
             </Content>

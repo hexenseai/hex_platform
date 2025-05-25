@@ -14,7 +14,9 @@ interface LoginFormValues {
   remember?: boolean;
 }
 
+
 const LoginPage: React.FC = () => {
+  const API_HOST = import.meta.env.VITE_APP_API_HOST;
   const navigate = useNavigate();
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
@@ -23,7 +25,7 @@ const LoginPage: React.FC = () => {
     setLoading(true);
     setError('');
     try {
-      const response = await fetch('/api/auth/login/', { // Django API endpoint'iniz
+      const response = await fetch(`${API_HOST}/api/auth/login/`, { // Django API endpoint'iniz
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -55,7 +57,7 @@ const LoginPage: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', background: '#f0f2f5' }}>
+    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', width: '100vw', background: '#f0f2f5' }}>
       <Card style={{ width: 400, boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
           {/* <img src="/path/to/your/logo.png" alt="Hexense Logo" style={{ height: 60, marginBottom: 16 }} /> */}
@@ -83,6 +85,11 @@ const LoginPage: React.FC = () => {
           <Form.Item>
             <Button type="primary" htmlType="submit" loading={loading} style={{ width: '100%' }}>
               Giriş Yap
+            </Button>
+          </Form.Item>
+          <Form.Item style={{ marginBottom: 0 }}>
+            <Button type="link" style={{ padding: 0 }} onClick={() => navigate('/register')}>
+              Kayıt Ol
             </Button>
           </Form.Item>
         </Form>
