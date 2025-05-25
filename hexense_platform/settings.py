@@ -46,10 +46,16 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
     'rest_framework_simplejwt.token_blacklist',
+    'django.contrib.sites', # django-allauth için gerekli
+    'allauth',
+    'allauth.account',
+    'allauth.socialaccount',
+    'allauth.socialaccount.providers.google',
     'hexense_core',
     'django_json_widget',
 ]
 
+SITE_ID = 1
 
 ASGI_APPLICATION = 'hexense_platform.asgi.application'
 
@@ -62,6 +68,7 @@ CHANNEL_LAYERS = {
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
+    'allauth.account.middleware.AccountMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -95,11 +102,10 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
-    'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework.authentication.SessionAuthentication',  # Admin panel login ile eşleşir
-        'rest_framework.authentication.BasicAuthentication',
-        # (ileride TokenAuthentication veya JWT eklenebilir)
-    ]
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ),
+    'DEFAULT_SCHEMA_CLASS': 'rest_framework.schemas.coreapi.AutoSchema' # Swagger/OpenAPI için
 }
 
 CSRF_TRUSTED_ORIGINS = [
@@ -129,6 +135,54 @@ DATABASES = {
     }
 }
 
+from datetime import timedelta
+
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=5), # Erişim token'ı ömrü
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=1), # Yenileme token'ı ömrü
+    'ROTATE_REFRESH_TOKENS': True, # Her yenilemede yeni bir yenileme token'ı ver
+    'BLACKLIST_AFTER_ROTATION': True, # Yenilenen eski yenileme token'ını kara listeye al
+    'UPDATE_LAST_LOGIN': False,
+
+    'ALGORITHM': 'HS256',
+    'SIGNING_KEY': SECRET_KEY, # Django SECRET_KEY'inizi kullanın
+    'VERIFYING_KEY': None,
+    'AUDIENCE': None,
+    'ISSUER': None,
+    'JWK_URL': None,
+    'LEEWAY': 0,
+
+    'AUTH_HEADER_TYPES': ('Bearer',), # Kimlik doğrulama başlığı tipi (örn: Authorization: Bearer <token>)
+    'AUTH_HEADER_NAME': 'HTTP_AUTHORIZATION',
+    'USER_ID_FIELD': 'id',
+    'USER_ID_CLAIM': 'user_id',
+    'USER_AUTHENTICATION_RULE': 'rest_framework_simplejwt.authentication.default_user_authentication_rule',
+
+    'AUTH_TOKEN_CLASSES': ('rest_framework_simplejwt.tokens.AccessToken',),
+    'TOKEN_TYPE_CLAIM': 'token_type',
+    'TOKEN_USER_CLASS': 'rest_framework_simplejwt.models.TokenUser',
+
+    'JTI_CLAIM': 'jti',
+
+    'SLIDING_TOKEN_LIFETIME': timedelta(minutes=5),
+    'SLIDING_TOKEN_REFRESH_LIFETIME': timedelta(days=1),
+}
+
+AUTHENTICATION_BACKENDS = (
+    'django.contrib.auth.backends.ModelBackend', # Django'nun varsayılan kimlik doğrulama backend'i
+    'allauth.account.auth_backends.AuthenticationBackend', # django-allauth backend'i
+)
+
+ACCOUNT_AUTHENTICATION_METHOD = "username_email" # Kullanıcı adı veya e-posta ile giriş
+ACCOUNT_EMAIL_REQUIRED = True
+ACCOUNT_USERNAME_REQUIRED = False
+ACCOUNT_SIGNUP_PASSWORD_ENTER_TWICE = False
+ACCOUNT_SESSION_REMEMBER = True
+ACCOUNT_UNIQUE_EMAIL = True
+
+# Giriş ve çıkış sonrası yönlendirme URL'leri (React'e yönlendirebilirsiniz)
+LOGIN_REDIRECT_URL = '/accounts/profile/'
+LOGOUT_REDIRECT_URL = "/login" # Örnek: Çıkış sonrası React uygulamasındaki bir sayfaya yönlendir
 
 # Password validation
 # https://docs.djangoproject.com/en/5.1/ref/settings/#auth-password-validators

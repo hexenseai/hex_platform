@@ -1,9 +1,10 @@
 // src/pages/LoginPage.tsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Form, Input, Button, Card, Typography, Alert } from 'antd';
 import { UserOutlined, LockOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import type { ApiError } from '../types'; // Tiplerimizi import edelim
+import api from '../services/api';
 
 const { Title } = Typography;
 
@@ -25,36 +26,44 @@ const LoginPage: React.FC = () => {
     setLoading(true);
     setError('');
     try {
-      const response = await fetch(`${API_HOST}/api/auth/login/`, { // Django API endpoint'iniz
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          // CSRF token Django session auth'da form gönderiminde gerekebilir,
-          // API için genellikle session cookie yeterlidir.
-          // Django'nun CSRF ayarlarını ve API'nizin nasıl korunduğunu kontrol edin.
-        },
-        body: JSON.stringify({ username: values.username, password: values.password }),
+      const response = await api.post(`token/`, {
+        username: values.username,
+        password: values.password,
       });
-
-      if (response.ok) {
-        // const data: LoginResponse = await response.json(); // Yanıtı parse et
-        // TODO: Auth state'ini güncelle (Context API veya Zustand/Redux ile)
-        // Örneğin, localStorage'a token kaydetme veya bir auth context'i güncelleme
-        // localStorage.setItem('isAuthenticated', 'true'); // Çok basit bir örnek
-        console.log("Login successful, navigating to /"); // Log eklendi
-        navigate('/');
-        // window.location.href = '/'; // Sayfa yenilemesiyle yönlendirme (state kaybına yol açar, navigate daha iyi)
+      localStorage.setItem('access_token', response.data.access);
+      localStorage.setItem('refresh_token', response.data.refresh);
+      console.log('Login successful, navigating to /');
+      navigate('/');
+    } catch (error: any) {
+      console.error('Login failed:', error);
+      if (error.response && error.response.data) {
+        setError(error.response.data.detail || 'Giriş başarısız. Lütfen bilgilerinizi kontrol edin.');
       } else {
-        const errorData: ApiError = await response.json();
-        setError(errorData.error || errorData.detail || 'Giriş başarısız. Lütfen bilgilerinizi kontrol edin.');
+        setError('Bir ağ hatası oluştu veya sunucuya ulaşılamadı.');
       }
-    } catch (err) {
-      console.error("Login request failed:", err); // Log eklendi
-      setError('Bir ağ hatası oluştu veya sunucuya ulaşılamadı.');
     } finally {
       setLoading(false);
     }
   };
+
+  const handleGoogleLogin = () => {
+    window.location.href = 'http://localhost:8000/accounts/google/login/';
+  };
+
+  useEffect(() => {
+    if (window.location.pathname === '/accounts/profile/') {
+      fetch('http://localhost:8000/accounts/profile/', {
+        credentials: 'include',
+      })
+        .then(res => res.json())
+        .then(data => {
+          if (data.access && data.refresh) {
+            localStorage.setItem('access', data.access);
+            localStorage.setItem('refresh', data.refresh);
+          }
+        });
+    }
+  }, []);
 
   return (
     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', width: '100vw', background: '#f0f2f5' }}>

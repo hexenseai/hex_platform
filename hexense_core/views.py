@@ -13,6 +13,7 @@ from sentence_transformers import SentenceTransformer
 import numpy as np
 from django.contrib.auth.models import User
 from django.db import transaction
+from rest_framework_simplejwt.tokens import RefreshToken
 
 
 class LoginView(APIView):
@@ -113,3 +114,15 @@ class RegisterView(APIView):
         # Profil oluştur
         profile = UserProfile.objects.create(user=user, company=company, department=department, role=role, is_current=True)
         return Response({'message': 'Kayıt başarılı.'}, status=status.HTTP_201_CREATED)
+
+
+class GetTokensAfterSocialLogin(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        user = request.user
+        refresh = RefreshToken.for_user(user)
+        return Response({
+            'access': str(refresh.access_token),
+            'refresh': str(refresh),
+        })

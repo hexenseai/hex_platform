@@ -3,17 +3,28 @@ from django.views.generic import TemplateView
 from django.conf import settings # Statik dosya sunumu için
 from django.conf.urls.static import static # Statik dosya sunumu için
 from django.contrib import admin
-from hexense_core.views import LoginView, LogoutView, WhoAmIView, RegisterView # Bunları burada import edin
+from rest_framework_simplejwt.views import (
+    TokenObtainPairView,
+    TokenRefreshView,
+    TokenVerifyView,
+)
+from hexense_core.views import LoginView, LogoutView, WhoAmIView, RegisterView, GetTokensAfterSocialLogin # Bunları burada import edin
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/core/', include('hexense_core.urls')), # API endpointleriniz
+    
+    path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'), # Token alma (login)
+    path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'), # Token yenileme
+    path('api/token/verify/', TokenVerifyView.as_view(), name='token_verify'), # Token doğrulama
 
+    path('accounts/', include('allauth.urls')), # django-allauth URL'leri
     # Auth API endpointlerini buraya taşıyabilir veya ayrı bir app'in urls.py'sine alabilirsiniz
     path('api/auth/login/', LoginView.as_view(), name='api_login'),
     path('api/auth/logout/', LogoutView.as_view(), name='api_logout'),
     path('api/auth/whoami/', WhoAmIView.as_view(), name='api_whoami'),
     path('api/auth/register/', RegisterView.as_view(), name='api_register'),
+    path('accounts/profile/', GetTokensAfterSocialLogin.as_view(), name='get_tokens_after_social_login'),
     # React uygulamasının ana HTML dosyasını sunacak catch-all route
     # Bu, API, admin, static ve media URL'leri dışındaki tüm istekleri yakalar.
     re_path(r'^(?!api/|admin/|static/|media/).*$', TemplateView.as_view(template_name="index.html")),

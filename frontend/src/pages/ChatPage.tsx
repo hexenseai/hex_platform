@@ -1,7 +1,7 @@
 // frontend/src/pages/ChatPage.tsx
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Layout, Menu, Select, Avatar, Dropdown, Space, Button, Typography, Spin, Input, Alert, App as AntApp } from 'antd';
+import { Layout, Menu, Select, Avatar, Dropdown, Space, Button, Typography, Spin, Input, Alert, App as AntApp, message, notification } from 'antd';
 import type { MenuProps } from 'antd';
 import { marked } from 'marked';
 
@@ -61,7 +61,6 @@ const ChatPage: React.FC = () => {
   const [showTypingIndicator, setShowTypingIndicator] = useState<boolean>(false);
 
   const chatBoxRef = useRef<HTMLDivElement>(null);
-  const { message: antMessage, notification } = AntApp.useApp(); // Ant Design message ve notification için
 
   const scrollToBottom = () => {
     if (chatBoxRef.current) {
@@ -75,21 +74,26 @@ const ChatPage: React.FC = () => {
 
   // --- WebSocket Yönetimi ---
   const connectWebSocket = useCallback(() => {
-    console.log("Attempting to connect WebSocket...");
-    const wsUrl = API_WS_HOST + '/ws/chat/';
+    const accessToken = localStorage.getItem('access_token');
+    if (!accessToken) {
+        message.error("Access token bulunamadı. Lütfen tekrar giriş yapın.");
+        return;
+    }
+    const wsUrl = `${API_WS_HOST}/ws/chat/?token=${accessToken}`;
     const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
       console.log("WebSocket connection opened.");
       setWsConnected(true);
       setWebSocket(ws);
-      // Bağlantı açıldığında, eğer bir profil ve paket zaten client'ta seçiliyse,
-      // bu bilgileri hemen backend'e gönder.
       if (selectedProfileId) {
         console.log("WS Open: Sending initial profile_change:", selectedProfileId);
         ws.send(JSON.stringify({ type: 'profile_change', profile_id: selectedProfileId }));
       }
-      // selectedGptPackage için de benzer bir mantık, profile_change_ack sonrası tetiklenecek
+      if (selectedGptPackage) {
+        console.log("WS Open: Sending initial gpt_package_change:", selectedGptPackage.id);
+        ws.send(JSON.stringify({ type: 'gpt_package_change', gpt_package_id: selectedGptPackage.id }));
+      }
     };
 
     ws.onmessage = (event) => {
@@ -104,7 +108,7 @@ const ChatPage: React.FC = () => {
 
       switch (data.type) {
         case 'connection_established':
-          antMessage.success(data.message || "Bağlantı kuruldu!");
+          message.success(data.message || "Bağlantı kuruldu!");
           break;
         case 'profile_change_ack':
           console.log("Profile change acknowledged by server:", data.profile_id);
@@ -166,6 +170,9 @@ const ChatPage: React.FC = () => {
         case 'assistant_stream_finalized':
            console.log("Assistant stream finalized.");
            setShowTypingIndicator(false);
+           console.log("isSendingMessage before set to false:", isSendingMessage);
+           setIsSendingMessage(false);
+           setTimeout(() => { console.log("isSendingMessage after set to false:", isSendingMessage); }, 100);
            setMessages(prevMessages => {
             const lastMessage = prevMessages[prevMessages.length - 1];
             if (lastMessage && lastMessage.sender === 'assistant' && lastMessage.isStreaming) {
@@ -177,7 +184,7 @@ const ChatPage: React.FC = () => {
             }
             return prevMessages;
           });
-          break;
+           break;
         case 'ui_actions':
           console.log("UI Actions received:", data.actions);
           // TODO: Gelen UI aksiyonlarını işle (örn: modal, grafik)
@@ -193,7 +200,7 @@ const ChatPage: React.FC = () => {
           setMessages(prev => [...prev, {
             id: `err-${Date.now()}`, sender: 'system_error', content: `Hata: ${data.message}`, timestamp: new Date()
           }]);
-          antMessage.error(`Sunucu Hatası: ${data.message}`);
+          message.error(`Sunucu Hatası: ${data.message}`);
           break;
         default:
           console.warn("Unknown WebSocket message type:", data.type);
@@ -206,14 +213,14 @@ const ChatPage: React.FC = () => {
       setWebSocket(null);
       // Belirli kapanma kodları için yeniden bağlanmayı deneyebiliriz
       if (event.code !== 1000) { // 1000 normal kapanma
-        antMessage.error("Bağlantı kesildi. 5 saniye içinde yeniden deneniyor...");
+        message.error("Bağlantı kesildi. 5 saniye içinde yeniden deneniyor...");
         setTimeout(connectWebSocket, 5000);
       }
     };
 
     ws.onerror = (error) => {
       console.error("WebSocket error:", error);
-      // antMessage.error("WebSocket bağlantı hatası oluştu.");
+      // message.error("WebSocket bağlantı hatası oluştu.");
       // onclose zaten tetiklenecektir.
     };
 
@@ -227,20 +234,38 @@ const ChatPage: React.FC = () => {
       setWebSocket(null);
       setWsConnected(false);
     };
-  }, [selectedProfileId, selectedGptPackage, userProfiles, antMessage, notification]); // Bağımlılıkları ekle
+  }, [API_WS_HOST, message, notification]);
 
   useEffect(() => {
     const cleanupWs = connectWebSocket();
     return cleanupWs; // Component unmount olduğunda WebSocket'i kapat
   }, [connectWebSocket]); // Sadece component mount/unmount olduğunda çalışsın diye.
 
+  // Profil değiştiğinde WebSocket'e bildir
+  useEffect(() => {
+    if (webSocket && wsConnected && selectedProfileId) {
+      webSocket.send(JSON.stringify({ type: 'profile_change', profile_id: selectedProfileId }));
+    }
+  }, [selectedProfileId, webSocket, wsConnected]);
+
+  // GPT package değiştiğinde WebSocket'e bildir
+  useEffect(() => {
+    if (webSocket && wsConnected && selectedGptPackage) {
+      webSocket.send(JSON.stringify({ type: 'gpt_package_change', gpt_package_id: selectedGptPackage.id }));
+    }
+  }, [selectedGptPackage, webSocket, wsConnected]);
 
   // --- API Veri Çekme ---
   useEffect(() => {
     const fetchWhoAmI = async () => {
       setLoadingWhoAmI(true);
       try {
-        const response = await fetch(`${API_HOST}/api/auth/whoami/`);
+        const accessToken = localStorage.getItem('access_token');
+        const response = await fetch(`${API_HOST}/api/auth/whoami/`, {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+          },
+        });
         if (!response.ok) {
           if (response.status === 401 || response.status === 403) {
             window.location.href = '/login';
@@ -319,18 +344,9 @@ const ChatPage: React.FC = () => {
     if (newProfile) {
       setSelectedProfileId(newProfile.value);
       setUserInfo(prev => ({...(prev || {fullname: ''}), avatar: newProfile.avatar})); // Avatarı güncelle
-      
       setGptPackages(newProfile.gptPackages || []);
       const defaultPkg = newProfile.gptPackages?.find(pkg => pkg.is_default) || newProfile.gptPackages?.[0];
-      
-      if (webSocket && wsConnected) {
-        console.log("Sending profile_change due to UI selection:", newProfile.value);
-        webSocket.send(JSON.stringify({ type: 'profile_change', profile_id: newProfile.value }));
-        // GPT paketi, profile_change_ack geldikten sonra handleWebSocketMessage içinde gönderilecek.
-      } else {
-        // WebSocket bağlı değilse, yeni seçilen paketi sadece client state'inde güncelle
-         setSelectedGptPackage(defaultPkg || null);
-      }
+      setSelectedGptPackage(defaultPkg || null);
       setMessages([]); // Profil değişince mesajları temizle
     }
   };
@@ -339,11 +355,7 @@ const ChatPage: React.FC = () => {
     const newPackage = gptPackages.find(p => p.key === menuInfo.key);
     if (newPackage && newPackage.id !== selectedGptPackage?.id) {
       setSelectedGptPackage(newPackage);
-      if (webSocket && wsConnected) {
-        console.log("Sending gpt_package_change due to UI selection:", newPackage.id);
-        webSocket.send(JSON.stringify({ type: 'gpt_package_change', gpt_package_id: newPackage.id }));
-      }
-       setMessages([]); // Paket değişince mesajları temizle (isteğe bağlı)
+      setMessages([]); // Paket değişince mesajları temizle (isteğe bağlı)
     }
   };
 
@@ -352,7 +364,7 @@ const ChatPage: React.FC = () => {
       console.log("Sending new_conversation request.");
       webSocket.send(JSON.stringify({ type: 'new_conversation' }));
     } else {
-      antMessage.warning("Yeni sohbet başlatmak için WebSocket bağlantısı gerekli.");
+      message.warning("Yeni sohbet başlatmak için WebSocket bağlantısı gerekli.");
     }
     setMessages([]); // UI'da mesajları hemen temizle
   };
@@ -365,15 +377,15 @@ const ChatPage: React.FC = () => {
     const messageText = currentMessageInput.trim();
     if (!messageText) return;
     if (!wsConnected || !webSocket) {
-      antMessage.error("WebSocket bağlantısı aktif değil. Mesaj gönderilemedi.");
+      message.error("WebSocket bağlantısı aktif değil. Mesaj gönderilemedi.");
       return;
     }
     if (!selectedProfileId) {
-        antMessage.error("Lütfen önce bir kullanıcı profili seçin.");
+        message.error("Lütfen önce bir kullanıcı profili seçin.");
         return;
     }
     if (!selectedGptPackage) {
-        antMessage.error("Lütfen önce bir GPT paketi seçin.");
+        message.error("Lütfen önce bir GPT paketi seçin.");
         return;
     }
 
@@ -413,11 +425,11 @@ const ChatPage: React.FC = () => {
         // localStorage.removeItem('isAuthenticated'); // Basit örnek
         window.location.href = '/login';
       } else {
-        antMessage.error("Çıkış yapılamadı.");
+        message.error("Çıkış yapılamadı.");
       }
     } catch (error) {
       console.error("Logout failed:", error);
-      antMessage.error("Çıkış sırasında bir hata oluştu.");
+      message.error("Çıkış sırasında bir hata oluştu.");
     }
   };
   
@@ -433,7 +445,7 @@ const ChatPage: React.FC = () => {
   if (loadingWhoAmI) {
     return (
       <Layout style={{ minHeight: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-        <Spin size="large" tip="Hexense Yükleniyor..." />
+        <Spin size="large" fullscreen />
       </Layout>
     );
   }
@@ -521,7 +533,7 @@ const ChatPage: React.FC = () => {
               mode="inline"
               selectedKeys={selectedGptPackage ? [selectedGptPackage.key] : []}
               onClick={handleGptPackageChange}
-              items={gptPackages.length > 0 ? gptPackages : [{key: 'no-package', label: 'Paket Yok', disabled: true, icon: <ExperimentOutlined/>}]}
+              items={gptPackages.length > 0 ? gptPackages.map(({is_default, ...item}) => item) : [{key: 'no-package', label: 'Paket Yok', disabled: true, icon: <ExperimentOutlined/>}]}
             />
           </Sider>
           <Layout style={{ marginLeft: collapsed ? 80 : 200, transition: 'margin-left 0.2s', display: 'flex', flexDirection: 'column', height: 'calc(100vh - 64px)', width: '100%' }}> {/* Sidebar genişliğine göre margin */}
@@ -619,7 +631,7 @@ const ChatPage: React.FC = () => {
                         handleSendMessage();
                       }
                     }}
-                    disabled={isSendingMessage || !wsConnected || !selectedGptPackage}
+                    disabled={isSendingMessage}
                     style={{
                       border: 'none',
                       borderRadius: 16,
@@ -634,7 +646,7 @@ const ChatPage: React.FC = () => {
                     icon={<SendOutlined />}
                     onClick={handleSendMessage}
                     loading={isSendingMessage}
-                    disabled={!currentMessageInput.trim() || !wsConnected || !selectedGptPackage}
+                    disabled={isSendingMessage}
                     style={{
                       borderRadius: 16,
                       marginLeft: 8,
