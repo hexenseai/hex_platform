@@ -1,9 +1,7 @@
 import React, { useState } from 'react';
-import { Form, Input, Button, Card, Typography, Alert } from 'antd';
-import { UserOutlined, LockOutlined, MailOutlined } from '@ant-design/icons';
+import { Box, TextField, Button, Card, Typography, Alert, CircularProgress } from '@mui/material';
+import { AccountCircle, Lock, Email } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
-
-const { Title } = Typography;
 
 interface RegisterFormValues {
   first_name: string;
@@ -17,8 +15,19 @@ const RegisterPage: React.FC = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [form, setForm] = useState<RegisterFormValues>({
+    first_name: '',
+    last_name: '',
+    email: '',
+    password: '',
+  });
 
-  const onFinish = async (values: RegisterFormValues) => {
+  const onChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setForm({ ...form, [e.target.name]: e.target.value });
+  };
+
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     setLoading(true);
     setError('');
     try {
@@ -27,7 +36,7 @@ const RegisterPage: React.FC = () => {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(values),
+        body: JSON.stringify(form),
       });
       if (response.ok) {
         // Kayıt başarılı, otomatik login
@@ -36,7 +45,7 @@ const RegisterPage: React.FC = () => {
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ username: values.email, password: values.password }),
+          body: JSON.stringify({ username: form.email, password: form.password }),
         });
         if (loginResponse.ok) {
           navigate('/');
@@ -55,38 +64,77 @@ const RegisterPage: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', width: '100vw', background: '#f0f2f5' }}>
-      <Card style={{ width: 400, boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }}>
-        <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <Title level={2} style={{ color: '#1890ff' }}>Kayıt Ol</Title>
-        </div>
-        {error && <Alert message={error} type="error" showIcon closable style={{ marginBottom: 24 }} />}
-        <Form name="register_form" onFinish={onFinish} size="large">
-          <Form.Item name="first_name" rules={[{ required: true, message: 'Lütfen adınızı girin!' }]}> 
-            <Input prefix={<UserOutlined />} placeholder="Ad" />
-          </Form.Item>
-          <Form.Item name="last_name" rules={[{ required: true, message: 'Lütfen soyadınızı girin!' }]}> 
-            <Input prefix={<UserOutlined />} placeholder="Soyad" />
-          </Form.Item>
-          <Form.Item name="email" rules={[{ required: true, type: 'email', message: 'Geçerli bir e-posta girin!' }]}> 
-            <Input prefix={<MailOutlined />} placeholder="E-posta" />
-          </Form.Item>
-          <Form.Item name="password" rules={[{ required: true, message: 'Lütfen şifre belirleyin!' }]}> 
-            <Input.Password prefix={<LockOutlined />} placeholder="Şifre" />
-          </Form.Item>
-          <Form.Item>
-            <Button type="primary" htmlType="submit" loading={loading} style={{ width: '100%' }}>
-              Kayıt Ol
-            </Button>
-          </Form.Item>
-          <Form.Item style={{ marginBottom: 0 }}>
-            <Button type="link" style={{ padding: 0 }} onClick={() => navigate('/login')}>
-              Giriş Yap
-            </Button>
-          </Form.Item>
-        </Form>
+    <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', width: '100vw', bgcolor: '#f0f2f5' }}>
+      <Card sx={{ width: 400, boxShadow: 3, p: 4 }}>
+        <Box sx={{ textAlign: 'center', mb: 4 }}>
+          <Typography variant="h4" color="primary" fontWeight={700} gutterBottom>Kayıt Ol</Typography>
+        </Box>
+        {error && <Alert severity="error" sx={{ mb: 3 }}>{error}</Alert>}
+        <form onSubmit={onSubmit} autoComplete="off">
+          <TextField
+            name="first_name"
+            label="Ad"
+            value={form.first_name}
+            onChange={onChange}
+            fullWidth
+            margin="normal"
+            required
+            InputProps={{ startAdornment: <AccountCircle sx={{ mr: 1 }} /> }}
+          />
+          <TextField
+            name="last_name"
+            label="Soyad"
+            value={form.last_name}
+            onChange={onChange}
+            fullWidth
+            margin="normal"
+            required
+            InputProps={{ startAdornment: <AccountCircle sx={{ mr: 1 }} /> }}
+          />
+          <TextField
+            name="email"
+            label="E-posta"
+            type="email"
+            value={form.email}
+            onChange={onChange}
+            fullWidth
+            margin="normal"
+            required
+            InputProps={{ startAdornment: <Email sx={{ mr: 1 }} /> }}
+          />
+          <TextField
+            name="password"
+            label="Şifre"
+            type="password"
+            value={form.password}
+            onChange={onChange}
+            fullWidth
+            margin="normal"
+            required
+            InputProps={{ startAdornment: <Lock sx={{ mr: 1 }} /> }}
+          />
+          <Button
+            type="submit"
+            variant="contained"
+            color="primary"
+            fullWidth
+            sx={{ mt: 2, mb: 1 }}
+            disabled={loading}
+            startIcon={loading ? <CircularProgress size={20} color="inherit" /> : null}
+          >
+            Kayıt Ol
+          </Button>
+          <Button
+            variant="text"
+            fullWidth
+            sx={{ p: 0, mt: 1 }}
+            onClick={() => navigate('/login')}
+          >
+            Giriş Yap
+          </Button>
+        </form>
       </Card>
-    </div>
+    </Box>
   );
 };
 

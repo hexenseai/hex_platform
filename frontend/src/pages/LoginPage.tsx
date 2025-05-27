@@ -1,41 +1,35 @@
 // src/pages/LoginPage.tsx
 import React, { useState, useEffect } from 'react';
-import { Form, Input, Button, Card, Typography, Alert } from 'antd';
-import { UserOutlined, LockOutlined } from '@ant-design/icons';
+import { Box, TextField, Button, Card, Typography, Alert, CircularProgress } from '@mui/material';
+import { AccountCircle, Lock } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import type { ApiError } from '../types'; // Tiplerimizi import edelim
 import api from '../services/api';
-
-const { Title } = Typography;
-
-// Ant Design Form'un onFinish fonksiyonundan gelen values tipi
-interface LoginFormValues {
-  username?: string;
-  password?: string;
-  remember?: boolean;
-}
-
 
 const LoginPage: React.FC = () => {
   const API_HOST = import.meta.env.VITE_APP_API_HOST;
   const navigate = useNavigate();
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
+  const [form, setForm] = useState({ username: '', password: '' });
 
-  const onFinish = async (values: LoginFormValues) => {
+  const onChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setForm({ ...form, [e.target.name]: e.target.value });
+  };
+
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     setLoading(true);
     setError('');
     try {
       const response = await api.post(`token/`, {
-        username: values.username,
-        password: values.password,
+        username: form.username,
+        password: form.password,
       });
       localStorage.setItem('access_token', response.data.access);
       localStorage.setItem('refresh_token', response.data.refresh);
-      console.log('Login successful, navigating to /');
       navigate('/');
     } catch (error: any) {
-      console.error('Login failed:', error);
       if (error.response && error.response.data) {
         setError(error.response.data.detail || 'Giriş başarısız. Lütfen bilgilerinizi kontrol edin.');
       } else {
@@ -66,44 +60,57 @@ const LoginPage: React.FC = () => {
   }, []);
 
   return (
-    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', width: '100vw', background: '#f0f2f5' }}>
-      <Card style={{ width: 400, boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }}>
-        <div style={{ textAlign: 'center', marginBottom: 32 }}>
+    <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', width: '100vw', bgcolor: '#f0f2f5' }}>
+      <Card sx={{ width: 400, boxShadow: 3, p: 4 }}>
+        <Box sx={{ textAlign: 'center', mb: 4 }}>
           {/* <img src="/path/to/your/logo.png" alt="Hexense Logo" style={{ height: 60, marginBottom: 16 }} /> */}
-          <Title level={2} style={{ color: '#1890ff' }}>Hexense AI Platform</Title>
-        </div>
-        {error && <Alert message={error} type="error" showIcon closable style={{ marginBottom: 24 }} />}
-        <Form
-          name="login_form"
-          initialValues={{ remember: true }}
-          onFinish={onFinish}
-          size="large"
-        >
-          <Form.Item
+          <Typography variant="h4" color="primary" fontWeight={700} gutterBottom>Hexense AI Platform</Typography>
+        </Box>
+        {error && <Alert severity="error" sx={{ mb: 3 }}>{error}</Alert>}
+        <form onSubmit={onSubmit} autoComplete="off">
+          <TextField
             name="username"
-            rules={[{ required: true, message: 'Lütfen kullanıcı adınızı girin!' }]}
-          >
-            <Input prefix={<UserOutlined />} placeholder="Kullanıcı Adı" />
-          </Form.Item>
-          <Form.Item
+            label="Kullanıcı Adı"
+            value={form.username}
+            onChange={onChange}
+            fullWidth
+            margin="normal"
+            required
+            InputProps={{ startAdornment: <AccountCircle sx={{ mr: 1 }} /> }}
+          />
+          <TextField
             name="password"
-            rules={[{ required: true, message: 'Lütfen şifrenizi girin!' }]}
+            label="Şifre"
+            type="password"
+            value={form.password}
+            onChange={onChange}
+            fullWidth
+            margin="normal"
+            required
+            InputProps={{ startAdornment: <Lock sx={{ mr: 1 }} /> }}
+          />
+          <Button
+            type="submit"
+            variant="contained"
+            color="primary"
+            fullWidth
+            sx={{ mt: 2, mb: 1 }}
+            disabled={loading}
+            startIcon={loading ? <CircularProgress size={20} color="inherit" /> : null}
           >
-            <Input.Password prefix={<LockOutlined />} placeholder="Şifre" />
-          </Form.Item>
-          <Form.Item>
-            <Button type="primary" htmlType="submit" loading={loading} style={{ width: '100%' }}>
-              Giriş Yap
-            </Button>
-          </Form.Item>
-          <Form.Item style={{ marginBottom: 0 }}>
-            <Button type="link" style={{ padding: 0 }} onClick={() => navigate('/register')}>
-              Kayıt Ol
-            </Button>
-          </Form.Item>
-        </Form>
+            Giriş Yap
+          </Button>
+          <Button
+            variant="text"
+            fullWidth
+            sx={{ p: 0, mt: 1 }}
+            onClick={() => navigate('/register')}
+          >
+            Kayıt Ol
+          </Button>
+        </form>
       </Card>
-    </div>
+    </Box>
   );
 };
 

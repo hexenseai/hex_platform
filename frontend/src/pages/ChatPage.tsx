@@ -1,25 +1,22 @@
 // frontend/src/pages/ChatPage.tsx
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Layout, Menu, Select, Avatar, Dropdown, Space, Button, Typography, Spin, Input, Alert, App as AntApp, message, notification } from 'antd';
-import type { MenuProps } from 'antd';
-import { marked } from 'marked';
-
 import {
-  UserOutlined,
-  MessageOutlined,
-  ExperimentOutlined,
-  SettingOutlined,
-  DownOutlined,
-  MenuFoldOutlined,
-  MenuUnfoldOutlined,
-  EditOutlined,
-  LogoutOutlined,
-  PlusOutlined,
-  SendOutlined, // Gönderme ikonu için
-  LoadingOutlined // Yükleme ikonu için
-} from '@ant-design/icons';
-
+  Box, AppBar, Toolbar, Typography, IconButton, Drawer, Button, Avatar, Select, MenuItem, Alert, CircularProgress, Snackbar, TextField, Paper, FormControl, InputLabel, useMediaQuery
+} from '@mui/material';
+import type { SelectChangeEvent } from '@mui/material';
+import {
+  Menu as MenuIcon,
+  Add as AddIcon,
+  Send as SendIcon,
+  Person as PersonIcon,
+  Logout as LogoutIcon,
+  Science as ScienceIcon,
+  Chat as ChatIcon,
+  HourglassEmpty as HourglassEmptyIcon,
+  Close as CloseIcon
+} from '@mui/icons-material';
+import { marked } from 'marked';
 import type {
   UserInfo,
   GptPackageOption,
@@ -28,19 +25,36 @@ import type {
   UserProfileOption,
   ChatMessage
 } from '../types';
-
-const { Header, Sider, Content } = Layout;
-const { Text, Paragraph } = Typography;
+import { useTheme, createTheme, ThemeProvider } from '@mui/material/styles';
 
 // Marked ayarları
 marked.setOptions({
   breaks: true,
   gfm: true,
-  // headerIds: false,
-  //mangle: false,
-  // sanitize: true, // DOMPurify gibi bir kütüphane ile yapmak daha iyi olabilir
 });
 
+// Dark mode theme
+const darkTheme = createTheme({
+  palette: {
+    mode: 'dark',
+    background: {
+      default: '#1a1b1e',
+      paper: '#242528',
+    },
+    primary: { main: '#8ab4f8' },
+    text: { primary: '#e3e3e3', secondary: '#9aa0a6' },
+    divider: '#35363a',
+  },
+  shape: { borderRadius: 12 },
+  typography: {
+    fontFamily: 'Google Sans, Roboto, Arial, sans-serif',
+    fontSize: 16,
+  },
+});
+
+const SIDEBAR_WIDTH_OPEN = 280;
+const SIDEBAR_WIDTH_CLOSED = 0; // Tamamen gizli sidebar
+const CHAT_MAX_WIDTH = 800; // Daha geniş chat alanı
 
 const ChatPage: React.FC = () => {
   const API_HOST = import.meta.env.VITE_APP_API_HOST;
@@ -55,10 +69,14 @@ const ChatPage: React.FC = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [currentMessageInput, setCurrentMessageInput] = useState<string>('');
   const [isSendingMessage, setIsSendingMessage] = useState<boolean>(false);
-  const [webSocket, setWebSocket] = useState<WebSocket | null>(null);
+  const webSocketRef = useRef<WebSocket | null>(null);
   const [wsConnected, setWsConnected] = useState<boolean>(false);
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [showTypingIndicator, setShowTypingIndicator] = useState<boolean>(false);
+  const [snackbar, setSnackbar] = useState<{open: boolean, message: string, severity: 'success'|'error'|'warning'|'info'}>({open: false, message: '', severity: 'info'});
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   const chatBoxRef = useRef<HTMLDivElement>(null);
 
@@ -73,90 +91,76 @@ const ChatPage: React.FC = () => {
   }, [messages]);
 
   // --- WebSocket Yönetimi ---
-  const connectWebSocket = useCallback(() => {
+  useEffect(() => {
     const accessToken = localStorage.getItem('access_token');
     if (!accessToken) {
-        message.error("Access token bulunamadı. Lütfen tekrar giriş yapın.");
+      setSnackbar({open: true, message: 'Access token bulunamadı. Lütfen tekrar giriş yapın.', severity: 'error'});
         return;
     }
     const wsUrl = `${API_WS_HOST}/ws/chat/?token=${accessToken}`;
     const ws = new WebSocket(wsUrl);
+    webSocketRef.current = ws;
 
     ws.onopen = () => {
-      console.log("WebSocket connection opened.");
       setWsConnected(true);
-      setWebSocket(ws);
       if (selectedProfileId) {
-        console.log("WS Open: Sending initial profile_change:", selectedProfileId);
         ws.send(JSON.stringify({ type: 'profile_change', profile_id: selectedProfileId }));
       }
       if (selectedGptPackage) {
-        console.log("WS Open: Sending initial gpt_package_change:", selectedGptPackage.id);
         ws.send(JSON.stringify({ type: 'gpt_package_change', gpt_package_id: selectedGptPackage.id }));
       }
+      setSnackbar({open: true, message: 'Bağlantı kuruldu!', severity: 'success'});
     };
 
     ws.onmessage = (event) => {
       let data;
       try {
         data = JSON.parse(event.data as string);
-        console.log("WebSocket RCV:", data);
       } catch (e) {
-        console.error("Invalid JSON from WS:", event.data);
         return;
       }
-
       switch (data.type) {
         case 'connection_established':
-          message.success(data.message || "Bağlantı kuruldu!");
+          setSnackbar({open: true, message: data.message || 'Bağlantı kuruldu!', severity: 'success'});
           break;
         case 'profile_change_ack':
-          console.log("Profile change acknowledged by server:", data.profile_id);
-          // Profil backend'de set edildi. Bu profile ait GPT paketlerini yükle/göster.
           const ackProfile = userProfiles.find(p => p.value === data.profile_id);
           if (ackProfile) {
             setGptPackages(ackProfile.gptPackages || []);
             const defaultPkg = ackProfile.gptPackages?.find(pkg => pkg.is_default) || ackProfile.gptPackages?.[0];
-            if (defaultPkg && webSocket) { // webSocket'in null olmadığını kontrol et
-                console.log("ProfileAck: Sending gpt_package_change for default:", defaultPkg.id);
-                webSocket.send(JSON.stringify({ type: 'gpt_package_change', gpt_package_id: defaultPkg.id }));
-                setSelectedGptPackage(defaultPkg); // Client state'ini de güncelle
-            } else if (ackProfile.gptPackages && ackProfile.gptPackages.length > 0 && webSocket) {
-                console.log("ProfileAck: Sending gpt_package_change for first available:", ackProfile.gptPackages[0].id);
-                webSocket.send(JSON.stringify({ type: 'gpt_package_change', gpt_package_id: ackProfile.gptPackages[0].id }));
-                setSelectedGptPackage(ackProfile.gptPackages[0]); // Client state'ini de güncelle
+            if (defaultPkg && webSocketRef.current) {
+                webSocketRef.current.send(JSON.stringify({ type: 'gpt_package_change', gpt_package_id: defaultPkg.id }));
+                setSelectedGptPackage(defaultPkg);
+            } else if (ackProfile.gptPackages && ackProfile.gptPackages.length > 0 && webSocketRef.current) {
+                webSocketRef.current.send(JSON.stringify({ type: 'gpt_package_change', gpt_package_id: ackProfile.gptPackages[0].id }));
+                setSelectedGptPackage(ackProfile.gptPackages[0]);
             } else {
-                setSelectedGptPackage(null); // Paket yoksa null yap
+                setSelectedGptPackage(null);
             }
           }
           break;
         case 'gpt_package_change_ack':
-          console.log("GPT package change acknowledged:", data.gpt_package_id, "Conv ID:", data.conversation_id);
           setCurrentConversationId(data.conversation_id);
-          // Paket değiştiğinde mesajları temizle (yeni bir bağlam)
           setMessages([]);
           break;
         case 'new_conversation_ack':
-          console.log("New conversation acknowledged:", data.conversation_id);
           setCurrentConversationId(data.conversation_id);
-          setMessages([]); // Yeni sohbet için mesajları temizle
+          setMessages([]);
           break;
         case 'assistant_message_chunk':
-          setShowTypingIndicator(false); // Chunk gelmeye başladı, typing indicator'ı kaldır
+          setShowTypingIndicator(false);
           setMessages(prevMessages => {
             const lastMessage = prevMessages[prevMessages.length - 1];
             if (lastMessage && lastMessage.sender === 'assistant' && lastMessage.isStreaming) {
-              // Mevcut stream edilen mesaja ekle
               return [
                 ...prevMessages.slice(0, -1),
                 { ...lastMessage, content: lastMessage.content + data.chunk }
               ];
             } else {
-              // Yeni bir asistan mesajı başlat
               return [
                 ...prevMessages,
                 {
-                  id: `asst-${Date.now()}`, // Basit bir ID
+                  id: `asst-${Date.now()}`,
                   sender: 'assistant',
                   content: data.chunk,
                   timestamp: new Date(),
@@ -168,15 +172,11 @@ const ChatPage: React.FC = () => {
           });
           break;
         case 'assistant_stream_finalized':
-           console.log("Assistant stream finalized.");
            setShowTypingIndicator(false);
-           console.log("isSendingMessage before set to false:", isSendingMessage);
            setIsSendingMessage(false);
-           setTimeout(() => { console.log("isSendingMessage after set to false:", isSendingMessage); }, 100);
            setMessages(prevMessages => {
             const lastMessage = prevMessages[prevMessages.length - 1];
             if (lastMessage && lastMessage.sender === 'assistant' && lastMessage.isStreaming) {
-              // Stream bitti, Markdown'ı parse et ve isStreaming'i false yap
               return [
                 ...prevMessages.slice(0, -1),
                 { ...lastMessage, isStreaming: false, content: marked.parse(lastMessage.content) as string }
@@ -186,76 +186,58 @@ const ChatPage: React.FC = () => {
           });
            break;
         case 'ui_actions':
-          console.log("UI Actions received:", data.actions);
-          // TODO: Gelen UI aksiyonlarını işle (örn: modal, grafik)
-          // handleUIActions(data.actions);
-          notification.info({
-            message: 'UI Aksiyonu Alındı',
-            description: JSON.stringify(data.actions, null, 2),
-          });
+          setSnackbar({open: true, message: 'UI Aksiyonu Alındı', severity: 'info'});
           break;
         case 'error':
-          console.error("WebSocket Error:", data.message);
           setShowTypingIndicator(false);
           setMessages(prev => [...prev, {
             id: `err-${Date.now()}`, sender: 'system_error', content: `Hata: ${data.message}`, timestamp: new Date()
           }]);
-          message.error(`Sunucu Hatası: ${data.message}`);
+          setSnackbar({open: true, message: `Sunucu Hatası: ${data.message}`, severity: 'error'});
           break;
         default:
-          console.warn("Unknown WebSocket message type:", data.type);
+          break;
       }
     };
 
     ws.onclose = (event) => {
-      console.warn("WebSocket connection closed:", event.reason, "Code:", event.code);
       setWsConnected(false);
-      setWebSocket(null);
-      // Belirli kapanma kodları için yeniden bağlanmayı deneyebiliriz
-      if (event.code !== 1000) { // 1000 normal kapanma
-        message.error("Bağlantı kesildi. 5 saniye içinde yeniden deneniyor...");
-        setTimeout(connectWebSocket, 5000);
+      webSocketRef.current = null;
+      if (event.code !== 1000) {
+        setSnackbar({open: true, message: 'Bağlantı kesildi. 5 saniye içinde yeniden deneniyor...', severity: 'error'});
+        setTimeout(() => {
+          // Bağlantı tekrar kurulacak
+          window.location.reload(); // En güvenli yol: sayfayı yenilemek
+        }, 5000);
       }
     };
 
-    ws.onerror = (error) => {
-      console.error("WebSocket error:", error);
-      // message.error("WebSocket bağlantı hatası oluştu.");
-      // onclose zaten tetiklenecektir.
+    ws.onerror = () => {
+      setSnackbar({open: true, message: 'WebSocket bağlantı hatası oluştu.', severity: 'error'});
     };
 
-    // setWebSocket(ws); // ws.onopen içinde set ediliyor
-
-    return () => { // Cleanup fonksiyonu
+    return () => {
       if (ws && ws.readyState === WebSocket.OPEN) {
-        console.log("Closing WebSocket connection on component unmount.");
-        ws.close(1000, "Component unmounting");
+        ws.close(1000, 'Component unmounting');
       }
-      setWebSocket(null);
+      webSocketRef.current = null;
       setWsConnected(false);
     };
-  }, [API_WS_HOST, message, notification]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
-    const cleanupWs = connectWebSocket();
-    return cleanupWs; // Component unmount olduğunda WebSocket'i kapat
-  }, [connectWebSocket]); // Sadece component mount/unmount olduğunda çalışsın diye.
-
-  // Profil değiştiğinde WebSocket'e bildir
-  useEffect(() => {
-    if (webSocket && wsConnected && selectedProfileId) {
-      webSocket.send(JSON.stringify({ type: 'profile_change', profile_id: selectedProfileId }));
+    if (webSocketRef.current && wsConnected && selectedProfileId) {
+      webSocketRef.current.send(JSON.stringify({ type: 'profile_change', profile_id: selectedProfileId }));
     }
-  }, [selectedProfileId, webSocket, wsConnected]);
+  }, [selectedProfileId, wsConnected]);
 
-  // GPT package değiştiğinde WebSocket'e bildir
   useEffect(() => {
-    if (webSocket && wsConnected && selectedGptPackage) {
-      webSocket.send(JSON.stringify({ type: 'gpt_package_change', gpt_package_id: selectedGptPackage.id }));
+    if (webSocketRef.current && wsConnected && selectedGptPackage) {
+      webSocketRef.current.send(JSON.stringify({ type: 'gpt_package_change', gpt_package_id: selectedGptPackage.id }));
     }
-  }, [selectedGptPackage, webSocket, wsConnected]);
+  }, [selectedGptPackage, wsConnected]);
 
-  // --- API Veri Çekme ---
   useEffect(() => {
     const fetchWhoAmI = async () => {
       setLoadingWhoAmI(true);
@@ -274,12 +256,10 @@ const ChatPage: React.FC = () => {
           throw new Error(`WhoAmI failed with status: ${response.status}`);
         }
         const data: WhoAmIResponse = await response.json();
-
         setUserInfo({
           fullname: data.current_profile?.user || data.username || 'Kullanıcı',
           avatar: data.current_profile?.avatar ?? undefined
         });
-        
         const profilesData: UserProfileOption[] = (data.profiles || []).map((p) => ({
           value: p.id,
           label: p.company?.name
@@ -287,8 +267,8 @@ const ChatPage: React.FC = () => {
             : p.role?.name || 'Genel Profil',
           gptPackages: (p.gpt_packages || []).map((pkg) => ({
             key: pkg.id,
-            id: pkg.id, // Gerçek ID
-            icon: <ExperimentOutlined />,
+            id: pkg.id,
+            icon: <ScienceIcon />,
             label: pkg.name,
             is_default: pkg.is_default,
             description: pkg.description,
@@ -297,20 +277,16 @@ const ChatPage: React.FC = () => {
           avatar: p.avatar ?? undefined
         }));
         setUserProfiles(profilesData);
-
         const currentProfData: UserProfileData | null = data.current_profile || (data.profiles && data.profiles.length > 0 ? data.profiles[0] : null);
-        
         if (currentProfData) {
-            // UserProfileOption tipine dönüştürme
             const currentProfOption: UserProfileOption = {
                 value: currentProfData.id,
                 label: currentProfData.company?.name ? `${currentProfData.company.name} - ${currentProfData.role?.name || 'Rol Yok'}` : currentProfData.role?.name || 'Genel Profil',
                 gptPackages: (currentProfData.gpt_packages || []).map((pkg: any) => ({
-                    key: pkg.id, id: pkg.id, label: pkg.name, is_default: pkg.is_default, icon: <ExperimentOutlined />, description: pkg.description, group: pkg.group
+                    key: pkg.id, id: pkg.id, label: pkg.name, is_default: pkg.is_default, icon: <ScienceIcon />, description: pkg.description, group: pkg.group
                 })),
                 avatar: currentProfData.avatar ?? undefined
             };
-
             setSelectedProfileId(currentProfOption.value);
             setGptPackages(currentProfOption.gptPackages || []);
             const defaultGpt = currentProfOption.gptPackages?.find(pkg => pkg.is_default) || currentProfOption.gptPackages?.[0];
@@ -323,346 +299,380 @@ const ChatPage: React.FC = () => {
                 ...(prev || {fullname: ''}),
                 avatar: currentProfOption.avatar && typeof currentProfOption.avatar === 'string' ? currentProfOption.avatar : undefined
             }));
-        } else {
-            console.warn("No current profile found or no profiles available.");
-            // Kullanıcıya bir profil seçmesi için yönlendirme veya uyarı
         }
-
       } catch (error) {
-        console.error("Failed to fetch WhoAmI:", error);
-        // window.location.href = '/login';
+        setSnackbar({open: true, message: 'Kullanıcı bilgisi alınamadı.', severity: 'error'});
       } finally {
         setLoadingWhoAmI(false);
       }
     };
     fetchWhoAmI();
-  }, []); // Sadece component mount olduğunda çalışsın
+  }, []);
 
-  // --- Olay Handler'ları ---
-  const handleProfileChange = (value: string) => {
+  const handleProfileChange = (event: SelectChangeEvent<string>) => {
+    const value = event.target.value;
     const newProfile = userProfiles.find(p => p.value === value);
     if (newProfile) {
       setSelectedProfileId(newProfile.value);
-      setUserInfo(prev => ({...(prev || {fullname: ''}), avatar: newProfile.avatar})); // Avatarı güncelle
+      setUserInfo(prev => ({...(prev || {fullname: ''}), avatar: newProfile.avatar}));
       setGptPackages(newProfile.gptPackages || []);
       const defaultPkg = newProfile.gptPackages?.find(pkg => pkg.is_default) || newProfile.gptPackages?.[0];
       setSelectedGptPackage(defaultPkg || null);
-      setMessages([]); // Profil değişince mesajları temizle
+      setMessages([]);
     }
   };
 
-  const handleGptPackageChange = (menuInfo: { key: string }) => {
-    const newPackage = gptPackages.find(p => p.key === menuInfo.key);
+  const handleGptPackageChange = (event: SelectChangeEvent<string>) => {
+    const value = event.target.value;
+    const newPackage = gptPackages.find(p => p.key === value);
     if (newPackage && newPackage.id !== selectedGptPackage?.id) {
       setSelectedGptPackage(newPackage);
-      setMessages([]); // Paket değişince mesajları temizle (isteğe bağlı)
+      setMessages([]);
     }
   };
 
   const handleNewChat = () => {
-    if (webSocket && wsConnected) {
-      console.log("Sending new_conversation request.");
-      webSocket.send(JSON.stringify({ type: 'new_conversation' }));
+    if (webSocketRef.current && wsConnected) {
+      webSocketRef.current.send(JSON.stringify({ type: 'new_conversation' }));
+      setMessages([]);
     } else {
-      message.warning("Yeni sohbet başlatmak için WebSocket bağlantısı gerekli.");
+      setSnackbar({open: true, message: 'Yeni sohbet başlatmak için WebSocket bağlantısı gerekli.', severity: 'warning'});
     }
-    setMessages([]); // UI'da mesajları hemen temizle
   };
 
-  const handleMessageInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+  const handleMessageInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     setCurrentMessageInput(e.target.value);
   };
 
   const handleSendMessage = () => {
     const messageText = currentMessageInput.trim();
     if (!messageText) return;
-    if (!wsConnected || !webSocket) {
-      message.error("WebSocket bağlantısı aktif değil. Mesaj gönderilemedi.");
+    if (!wsConnected || !webSocketRef.current) {
+      setSnackbar({open: true, message: 'WebSocket bağlantısı aktif değil. Mesaj gönderilemedi.', severity: 'error'});
       return;
     }
     if (!selectedProfileId) {
-        message.error("Lütfen önce bir kullanıcı profili seçin.");
+      setSnackbar({open: true, message: 'Lütfen önce bir kullanıcı profili seçin.', severity: 'error'});
         return;
     }
     if (!selectedGptPackage) {
-        message.error("Lütfen önce bir GPT paketi seçin.");
+      setSnackbar({open: true, message: 'Lütfen önce bir GPT paketi seçin.', severity: 'error'});
         return;
     }
-
-    // Kullanıcı mesajını UI'a ekle
     setMessages(prev => [...prev, {
       id: `user-${Date.now()}`,
       sender: 'user',
       content: messageText,
       timestamp: new Date()
     }]);
-
-    console.log("Sending chat_message to WS:", messageText);
-    webSocket.send(JSON.stringify({
+    webSocketRef.current.send(JSON.stringify({
       type: 'chat_message',
       message: messageText,
-      // profile_id ve gpt_package_id backend consumer'da self'ten alınıyor,
-      // ama yine de göndermek tutarlılık sağlayabilir veya consumer'daki mantığı basitleştirebilir.
-      // Şimdiki consumer'ımız bunları beklemiyor, self'ten alıyor.
     }));
-    
     setCurrentMessageInput('');
-    setShowTypingIndicator(true); // Typing indicator'ı göster
-    setIsSendingMessage(true); // Butonu pasif yapmak için (opsiyonel)
+    setShowTypingIndicator(true);
+    setIsSendingMessage(true);
   };
 
   const handleLogout = async () => {
     try {
-      const response = await fetch(`${API_HOST}/api/auth/logout/`, { 
-          method: 'POST',
-          headers: {
-            // CSRF token gerekebilir, Django'nun SessionAuthentication'ı için
-            // 'X-CSRFToken': getCookie('csrftoken'), // getCookie fonksiyonunu implemente etmeniz gerekir
-          }
-      });
+      const response = await fetch(`${API_HOST}/api/auth/logout/`, { method: 'POST' });
       if (response.ok) {
-        // Auth state'ini temizle (Context/localStorage vb.)
-        // localStorage.removeItem('isAuthenticated'); // Basit örnek
         window.location.href = '/login';
       } else {
-        message.error("Çıkış yapılamadı.");
+        setSnackbar({open: true, message: 'Çıkış yapılamadı.', severity: 'error'});
       }
     } catch (error) {
-      console.error("Logout failed:", error);
-      message.error("Çıkış sırasında bir hata oluştu.");
+      setSnackbar({open: true, message: 'Çıkış sırasında bir hata oluştu.', severity: 'error'});
     }
   };
-  
-  const userMenuProps: MenuProps = {
-    items: [
-      { key: 'profile', label: 'Kullanıcı Profili', icon: <UserOutlined /> /* onClick: () => navigate('/profile') */ },
-      { key: 'settings', label: 'Ayarlar', icon: <SettingOutlined /> },
-      { type: 'divider' },
-      { key: 'logout', label: 'Çıkış Yap', icon: <LogoutOutlined />, danger: true, onClick: handleLogout },
-    ]
-  };
+
+  // Responsive: Mobilde sidebar kapalı başlasın
+  useEffect(() => {
+    if (isMobile) setSidebarOpen(false);
+    else setSidebarOpen(true);
+  }, [isMobile]);
 
   if (loadingWhoAmI) {
     return (
-      <Layout style={{ minHeight: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-        <Spin size="large" fullscreen />
-      </Layout>
+      <Box sx={{ minHeight: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', bgcolor: '#f5f6fa' }}>
+        <CircularProgress size={80} />
+      </Box>
     );
   }
 
   const currentGptPackageName = selectedGptPackage?.label || 'Paket Seçilmedi';
 
   return (
-    <AntApp> {/* Ant Design message, notification, modal için context sağlar */}
-      <Layout style={{ minHeight: '100vh' }}>
-        <Header
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '0 32px',
-            background: '#fff',
-            borderBottom: '1px solid #f0f0f0',
-            position: 'fixed',
-            zIndex: 1,
-            width: '100%',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+    <ThemeProvider theme={darkTheme}>
+      <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: 'background.default' }}>
+        {/* Sidebar */}
+        <Drawer
+          variant={isMobile ? 'temporary' : 'permanent'}
+          open={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+          PaperProps={{
+            sx: {
+              width: SIDEBAR_WIDTH_OPEN,
+              bgcolor: 'background.paper',
+              borderRight: '1px solid',
+              borderColor: 'divider',
+              boxShadow: 'none',
+              p: 2,
+            }
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center' }}>
+          {/* Logo alanı */}
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: sidebarOpen ? 'flex-start' : 'center', height: 64, px: 2, borderBottom: 'none', width: '100%' }}>
+            <ChatIcon color="primary" sx={{ fontSize: 32, mr: sidebarOpen ? 1.5 : 0, transition: 'margin 0.2s' }} />
+            {sidebarOpen && <Typography variant="h6" fontWeight={700} color="primary">Hexense AI</Typography>}
+            {(!isMobile && sidebarOpen) && (
+              <IconButton size="small" onClick={() => setSidebarOpen(false)} sx={{ ml: 'auto', color: 'text.secondary' }}>
+                <CloseIcon />
+              </IconButton>
+            )}
+          </Box>
+          {/* Seçim kutuları ve butonlar */}
+          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: sidebarOpen ? 'flex-start' : 'center', gap: 2, width: '100%', mt: 3, px: sidebarOpen ? 2 : 0 }}>
+            <FormControl size="small" fullWidth={sidebarOpen} sx={{ bgcolor: '#23262F', borderRadius: 2, minWidth: sidebarOpen ? 160 : 48 }}>
+              <Select
+                value={selectedProfileId || ''}
+                onChange={handleProfileChange}
+                displayEmpty
+                renderValue={selected => {
+                  const profile = userProfiles.find(p => p.value === selected);
+                  return profile ? (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Avatar src={profile.avatar} sx={{ width: 24, height: 24 }} />
+                      {sidebarOpen && <Typography variant="body2">{profile.label}</Typography>}
+                    </Box>
+                  ) : <Typography variant="body2" color="text.secondary">Profil Seçin</Typography>;
+                }}
+                sx={{ '.MuiSelect-select': { p: 0.5, display: 'flex', alignItems: 'center', justifyContent: sidebarOpen ? 'flex-start' : 'center', color: 'text.primary' } }}
+              >
+                {userProfiles.map(profile => (
+                  <MenuItem key={profile.value} value={profile.value} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Avatar src={profile.avatar} sx={{ width: 24, height: 24, mr: 1 }} />
+                    <Typography variant="body2">{profile.label}</Typography>
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <FormControl size="small" fullWidth={sidebarOpen} sx={{ bgcolor: '#23262F', borderRadius: 2, minWidth: sidebarOpen ? 160 : 48 }}>
+              <Select
+                value={selectedGptPackage?.key || ''}
+                onChange={handleGptPackageChange}
+                displayEmpty
+                renderValue={selected => {
+                  const pkg = gptPackages.find(p => p.key === selected);
+                  return pkg ? (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <ScienceIcon color="primary" />
+                      {sidebarOpen && <Typography variant="body2">{pkg.label}</Typography>}
+                    </Box>
+                  ) : <Typography variant="body2" color="text.secondary">GPT Paketi Seçin</Typography>;
+                }}
+                sx={{ '.MuiSelect-select': { p: 0.5, display: 'flex', alignItems: 'center', justifyContent: sidebarOpen ? 'flex-start' : 'center', color: 'text.primary' } }}
+              >
+                {gptPackages.map(pkg => (
+                  <MenuItem key={pkg.key} value={pkg.key} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <ScienceIcon color="primary" sx={{ mr: 1 }} />
+                    <Typography variant="body2">{pkg.label}</Typography>
+                  </MenuItem>
+                ))}
+                {gptPackages.length === 0 && <MenuItem value="" disabled>Paket Yok</MenuItem>}
+              </Select>
+            </FormControl>
             <Button
-              type="text"
-              icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-              onClick={() => setCollapsed(!collapsed)}
-              style={{ fontSize: '16px', width: 48, height: 48, marginRight: 8 }}
-            />
-            <Text strong style={{ fontSize: '20px' }}>Hexense AI</Text>
-            <Text type="secondary" style={{ marginLeft: 20, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 200 }} title={currentGptPackageName}>
-                {currentGptPackageName}
-            </Text>
-          </div>
-          
-          <Space size="middle" align="center">
-            <Select
-              value={selectedProfileId}
-              style={{ width: 220, minWidth: 150 }}
-              onChange={handleProfileChange}
-              options={userProfiles}
-              placeholder="Profil Seçin"
-              showSearch
-              optionFilterProp="label"
-              loading={loadingWhoAmI}
-            />
-            <Dropdown menu={userMenuProps} trigger={['click']}>
-              <a onClick={(e) => e.preventDefault()} style={{ display: 'inline-flex', alignItems: 'center', height: '100%', padding: '0 8px' }}>
-                <Space>
-                  <Avatar icon={<UserOutlined />} src={userInfo?.avatar} size="small" />
-                  <Text style={{maxWidth: 150, display: 'inline-block'}} ellipsis={{tooltip: userInfo?.fullname || 'Kullanıcı'}}>
-                      {userInfo?.fullname || 'Kullanıcı'}
-                  </Text>
-                  <DownOutlined />
-                </Space>
-              </a>
-            </Dropdown>
-            <Button icon={<EditOutlined />} type="text" title="Canvas Alanını Aç/Kapat"/>
-          </Space>
-        </Header>
-        <Layout style={{ paddingTop: 64 }}> {/* Header yüksekliği kadar padding */}
-          <Sider
-            collapsible
-            collapsed={collapsed}
-            onCollapse={(value) => setCollapsed(value)}
-            theme="light"
-            style={{
-              borderRight: '1px solid #f0f0f0',
-              height: 'calc(100vh - 64px)',
-              position: 'fixed',
-              left: 0,
-              top: 64,
-              bottom: 0,
+              variant="contained"
+              color="primary"
+              sx={{ borderRadius: '50%', minWidth: 0, width: 48, height: 48, boxShadow: 2, alignSelf: sidebarOpen ? 'flex-start' : 'center', bgcolor: '#23262F', color: 'primary.main', '&:hover': { bgcolor: '#23262F', color: 'primary.light' } }}
+              onClick={handleNewChat}
+            >
+              <AddIcon />
+              {sidebarOpen && <Typography variant="body2" sx={{ ml: 1, fontWeight: 500 }}>Yeni Sohbet</Typography>}
+            </Button>
+          </Box>
+          <Box sx={{ flexGrow: 1 }} />
+          <Box sx={{ display: 'flex', flexDirection: sidebarOpen ? 'row' : 'column', alignItems: 'center', justifyContent: 'center', width: '100%', mb: 2, gap: 1 }}>
+            <Avatar src={userInfo?.avatar} sx={{ width: 40, height: 40 }} />
+            {sidebarOpen && <Typography variant="body2" sx={{ ml: 1 }}>{userInfo?.fullname || 'Kullanıcı'}</Typography>}
+            <IconButton color="default" onClick={handleLogout} title="Çıkış Yap">
+              <LogoutIcon />
+            </IconButton>
+          </Box>
+        </Drawer>
+        {/* Ana içerik */}
+        <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh', position: 'relative', bgcolor: 'background.default' }}>
+          {/* AppBar'ın yüksekliği kadar üstten boşluk */}
+          <Toolbar />
+          {/* Chat akışı alanı */}
+          <Box
+            sx={{
+              flex: 1,
+              width: '100%',
+              maxWidth: { xs: '100%', md: 1200 },
+              mx: 'auto',
+              px: { xs: 1, sm: 2, md: 4 },
+              pb: { xs: 2, sm: 3, md: 4 },
+              pt: 2,
               overflowY: 'auto',
-              background: '#f7f8fc',
-              boxShadow: '2px 0 8px rgba(0,0,0,0.03)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 3,
             }}
           >
-            <Button type="primary" icon={<PlusOutlined />} style={{ margin: '16px auto', display: 'block', width: collapsed ? 'auto' : 'calc(100% - 32px)' }} block={!collapsed} onClick={handleNewChat}>
-              {!collapsed && 'Yeni Sohbet'}
-            </Button>
-            <Menu
-              theme="light"
-              mode="inline"
-              selectedKeys={selectedGptPackage ? [selectedGptPackage.key] : []}
-              onClick={handleGptPackageChange}
-              items={gptPackages.length > 0 ? gptPackages.map(({is_default, ...item}) => item) : [{key: 'no-package', label: 'Paket Yok', disabled: true, icon: <ExperimentOutlined/>}]}
-            />
-          </Sider>
-          <Layout style={{ marginLeft: collapsed ? 80 : 200, transition: 'margin-left 0.2s', display: 'flex', flexDirection: 'column', height: 'calc(100vh - 64px)', width: '100%' }}> {/* Sidebar genişliğine göre margin */}
-            <Content
-              style={{
-                padding: '24px',
-                margin: 0,
-                background: '#f7f8fc',
-                display: 'flex',
-                flexDirection: 'column',
-                flexGrow: 1,
-                overflow: 'hidden'
-              }}
-            >
-              <div ref={chatBoxRef} style={{ flexGrow: 1, background: '#fff', border: '1px solid #e8e8e8', borderRadius: 8, padding: 16, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px' }} id="chat-box-react">
-                {(selectedGptPackage || gptPackages.length === 0) && (
-                  <Alert
-                    message="Lütfen önce bir GPT paketi seçin."
-                    type="warning"
-                    showIcon
-                    style={{ marginBottom: 16 }}
-                  />
-                )}
-                {messages.length === 0 && !showTypingIndicator && (
-                    <div style={{textAlign: 'center', margin: 'auto', color: '#aaa'}}>
-                        <MessageOutlined style={{fontSize: 48, marginBottom: 16}}/>
-                        <Paragraph>Sohbet başlatmak için bir mesaj yazın veya kenar çubuğundan bir GPT paketi seçin.</Paragraph>
-                    </div>
-                )}
-                {messages.map((msg) => (
-                  <div key={msg.id} style={{ alignSelf: msg.sender === 'user' ? 'flex-end' : 'flex-start', maxWidth: '70%' }}>
-                    <div
-                      style={{
-                        padding: '12px 18px',
-                        borderRadius: msg.sender === 'user' ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
-                        background: msg.sender === 'user'
-                          ? 'linear-gradient(90deg, #4f8cff 0%, #3358ff 100%)'
-                          : '#f0f2f5',
-                        color: msg.sender === 'user' ? 'white' : '#222',
-                        boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
-                        marginBottom: 8,
-                        maxWidth: '75%',
-                        alignSelf: msg.sender === 'user' ? 'flex-end' : 'flex-start',
-                        fontSize: 16,
-                        lineHeight: 1.6,
-                      }}
-                    >
-                      {msg.sender === 'assistant' && msg.gptPackageName && (
-                        <Text type="secondary" style={{ fontSize: '0.75rem', display: 'block', marginBottom: 4 }}>
-                          {msg.gptPackageName}
-                        </Text>
-                      )}
-                      {/* Stream bitene kadar metin, bitince parse edilmiş HTML */}
-                      {msg.sender === 'assistant' && !msg.isStreaming ? (
-                        <div className="markdown-content" dangerouslySetInnerHTML={{ __html: msg.content }} />
-                      ) : (
-                        <Paragraph style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{msg.content}</Paragraph>
-                      )}
-                       {msg.sender === 'system_error' && (
-                        <Alert message={msg.content} type="error" style={{padding: '4px 8px'}}/>
-                      )}
-                    </div>
-                    <Text type="secondary" style={{ fontSize: '0.7rem', display: 'block', textAlign: msg.sender === 'user' ? 'right' : 'left', marginTop: 2 }}>
-                      {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </Text>
-                  </div>
-                ))}
-                {showTypingIndicator && (
-                    <div style={{ alignSelf: 'flex-start', maxWidth: '70%' }}>
-                         <div style={{padding: '8px 12px', borderRadius: '12px', background: '#e8e8e8', color: 'black', borderBottomLeftRadius: '0px'}}>
-                            {selectedGptPackage && <Text type="secondary" style={{ fontSize: '0.75rem', display: 'block', marginBottom: 4 }}>{selectedGptPackage.label}</Text>}
-                            <LoadingOutlined style={{ fontSize: 18, color: '#1890ff' }} />
-                         </div>
-                    </div>
-                )}
-              </div>
-              <div style={{ marginTop: 16, padding: '16px', background: '#fff', border: '1px solid #e8e8e8', borderRadius: 8}} id="message-input-react">
-                <Space.Compact
-                  style={{
-                    width: '100%',
-                    background: '#fff',
-                    borderRadius: 16,
-                    boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
-                    padding: 4,
+            {/* Paket seçilmediyse uyarı */}
+            {(!selectedGptPackage && gptPackages.length === 0) && (
+              <Alert severity="warning" sx={{ mb: 2 }}>Lütfen önce bir GPT paketi seçin.</Alert>
+            )}
+            {/* Boş chat ekranı */}
+            {messages.length === 0 && !showTypingIndicator && (
+              <Box sx={{ textAlign: 'center', color: '#bbb', my: 6 }}>
+                <ChatIcon sx={{ fontSize: 56, mb: 2 }} />
+                <Typography variant="h5" fontWeight={500}>Sohbet başlatmak için bir mesaj yazın</Typography>
+                <Typography variant="body2" color="text.secondary">veya kenar çubuğundan bir GPT paketi seçin.</Typography>
+              </Box>
+            )}
+            {/* Mesajlar */}
+            {messages.map((msg) => (
+              msg.sender === 'user' ? (
+                <Box
+                  key={msg.id}
+                  sx={{
+                    display: 'flex',
+                    flexDirection: 'row-reverse',
+                    gap: 2,
+                    maxWidth: '85%',
+                    ml: 'auto',
                   }}
                 >
-                  <Input.TextArea
-                    placeholder="Bir mesaj yazın..."
-                    autoSize={{ minRows: 1, maxRows: 5 }}
-                    value={currentMessageInput}
-                    onChange={handleMessageInputChange}
-                    onPressEnter={(e) => {
-                      if (!e.shiftKey) {
-                        e.preventDefault();
-                        handleSendMessage();
-                      }
+                  <Avatar 
+                    sx={{ 
+                      width: 32, 
+                      height: 32,
+                      bgcolor: 'primary.main',
+                      color: 'background.paper',
                     }}
-                    disabled={isSendingMessage}
-                    style={{
-                      border: 'none',
-                      borderRadius: 16,
-                      fontSize: 16,
-                      background: 'transparent',
-                      resize: 'none',
+                  >
+                    <PersonIcon />
+                  </Avatar>
+                  <Paper
+                    sx={{
+                      p: 2,
+                      bgcolor: 'background.paper',
+                      borderRadius: '16px 16px 4px 16px',
+                      border: '1px solid',
+                      borderColor: 'divider',
                       boxShadow: 'none',
                     }}
-                  />
-                  <Button
-                    type="primary"
-                    icon={<SendOutlined />}
-                    onClick={handleSendMessage}
-                    loading={isSendingMessage}
-                    disabled={isSendingMessage}
-                    style={{
-                      borderRadius: 16,
-                      marginLeft: 8,
-                      height: 48,
-                      width: 48,
-                      fontSize: 20,
-                      boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+                  >
+                    <Typography>{msg.content}</Typography>
+                  </Paper>
+                </Box>
+              ) : (
+                <Box
+                  key={msg.id}
+                  sx={{
+                    display: 'flex',
+                    gap: 2,
+                    maxWidth: '85%',
+                  }}
+                >
+                  <Avatar
+                    sx={{
+                      width: 32,
+                      height: 32,
+                      bgcolor: 'primary.main',
+                      color: 'background.paper',
                     }}
-                  />
-                </Space.Compact>
-              </div>
-            </Content>
-          </Layout>
-        </Layout>
-      </Layout>
-    </AntApp>
+                  >
+                    <ScienceIcon />
+                  </Avatar>
+                  <Paper
+                    sx={{
+                      p: 2,
+                      bgcolor: 'background.paper',
+                      borderRadius: '16px 16px 16px 4px',
+                      border: '1px solid',
+                      borderColor: 'divider',
+                      boxShadow: 'none',
+                    }}
+                  >
+                    <Typography
+                      className="markdown-content"
+                      dangerouslySetInnerHTML={{ __html: msg.content }}
+                    />
+                  </Paper>
+                </Box>
+              )
+            ))}
+            {/* Asistan yazıyor animasyonu */}
+            {showTypingIndicator && (
+              <Box sx={{ display: 'flex', flexDirection: 'row', alignItems: 'flex-end', gap: 1.5, width: '100%' }}>
+                <Avatar sx={{ width: 32, height: 32, bgcolor: '#23262F', color: 'primary.main', fontWeight: 700 }}>
+                  <ScienceIcon />
+                </Avatar>
+                <Box sx={{ flex: 1, px: 0, py: 0, bgcolor: 'transparent', color: '#fff', fontSize: 16, lineHeight: 1.7, maxWidth: '100%', wordBreak: 'break-word', borderRadius: 0, display: 'flex', alignItems: 'center', gap: 1 }}>
+                  {selectedGptPackage && <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mr: 1 }}>{selectedGptPackage.label}</Typography>}
+                  <HourglassEmptyIcon sx={{ fontSize: 18, color: 'primary.main' }} />
+                </Box>
+              </Box>
+            )}
+          </Box>
+          {/* Chat formu: sabit, ekranın en altında, responsive padding ve genişlik */}
+          <Paper
+            elevation={0}
+            sx={{
+              position: 'sticky',
+              bottom: 0,
+              p: 2,
+              bgcolor: 'background.default',
+              borderTop: '1px solid',
+              borderColor: 'divider',
+            }}
+          >
+            <Box
+              sx={{
+                maxWidth: CHAT_MAX_WIDTH,
+                mx: 'auto',
+                display: 'flex',
+                gap: 2,
+              }}
+            >
+              <TextField
+                fullWidth
+                multiline
+                maxRows={4}
+                placeholder="Mesajınızı yazın..."
+                value={currentMessageInput}
+                onChange={handleMessageInputChange}
+                variant="outlined"
+                sx={{
+                  '& .MuiOutlinedInput-root': {
+                    bgcolor: 'background.paper',
+                    borderRadius: 2,
+                  }
+                }}
+              />
+              <IconButton
+                onClick={handleSendMessage}
+                disabled={isSendingMessage}
+                sx={{
+                  bgcolor: 'primary.main',
+                  color: 'background.paper',
+                  '&:hover': {
+                    bgcolor: 'primary.dark',
+                  }
+                }}
+              >
+                <SendIcon />
+              </IconButton>
+            </Box>
+          </Paper>
+        </Box>
+      </Box>
+    </ThemeProvider>
   );
 };
 
