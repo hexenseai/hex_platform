@@ -3,6 +3,8 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import LoginPage from './pages/LoginPage.tsx';
 import ChatPage from './pages/ChatPage.tsx';
+import { ThemeProvider } from './theme/ThemeProvider';
+
 // import PrivateRoute from './routes/PrivateRoute'; // AuthContext ile kullanılacak
 // import { AuthProvider, useAuth } from './context/AuthContext'; // AuthContext için
 
@@ -24,19 +26,20 @@ import ChatPage from './pages/ChatPage.tsx';
 //   );
 // }
 
-function App() {
-  // Şimdilik AuthProvider ve PrivateRoute olmadan basit yapı:
+const App: React.FC = () => {
   return (
-    <Router>
-      {/* <AuthProvider> */}
-        {/* <AppContent /> */}
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/" element={<ChatPage />} />
-          <Route path="*" element={<Navigate to="/" />} />
-        </Routes>
-      {/* </AuthProvider> */}
-    </Router>
+    <ThemeProvider>
+      <Router>
+        {/* <AuthProvider> */}
+          {/* <AppContent /> */}
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/" element={<ChatPage />} />
+            <Route path="*" element={<Navigate to="/" />} />
+          </Routes>
+        {/* </AuthProvider> */}
+      </Router>
+    </ThemeProvider>
   );
 }
 

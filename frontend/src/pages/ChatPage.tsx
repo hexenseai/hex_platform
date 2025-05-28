@@ -14,7 +14,11 @@ import {
   Science as ScienceIcon,
   Chat as ChatIcon,
   HourglassEmpty as HourglassEmptyIcon,
-  Close as CloseIcon
+  Close as CloseIcon,
+  Mic as MicIcon,
+  CameraAlt as CameraAltIcon,
+  ChevronLeft as ChevronLeftIcon,
+  ChevronRight as ChevronRightIcon,
 } from '@mui/icons-material';
 import { marked } from 'marked';
 import type {
@@ -26,6 +30,9 @@ import type {
   ChatMessage
 } from '../types';
 import { useTheme, createTheme, ThemeProvider } from '@mui/material/styles';
+import DOMPurify from 'dompurify';
+import logoOnly from '../assets/logo/logo_only.png';
+import logoFull from '../assets/logo/logo_full.png';
 
 // Marked ayarları
 marked.setOptions({
@@ -33,28 +40,8 @@ marked.setOptions({
   gfm: true,
 });
 
-// Dark mode theme
-const darkTheme = createTheme({
-  palette: {
-    mode: 'dark',
-    background: {
-      default: '#1a1b1e',
-      paper: '#242528',
-    },
-    primary: { main: '#8ab4f8' },
-    text: { primary: '#e3e3e3', secondary: '#9aa0a6' },
-    divider: '#35363a',
-  },
-  shape: { borderRadius: 12 },
-  typography: {
-    fontFamily: 'Google Sans, Roboto, Arial, sans-serif',
-    fontSize: 16,
-  },
-});
-
-const SIDEBAR_WIDTH_OPEN = 280;
-const SIDEBAR_WIDTH_CLOSED = 0; // Tamamen gizli sidebar
-const CHAT_MAX_WIDTH = 800; // Daha geniş chat alanı
+const SIDEBAR_WIDTH = 280;
+const SIDEBAR_COLLAPSED_WIDTH = 64;
 
 const ChatPage: React.FC = () => {
   const API_HOST = import.meta.env.VITE_APP_API_HOST;
@@ -75,6 +62,7 @@ const ChatPage: React.FC = () => {
   const [showTypingIndicator, setShowTypingIndicator] = useState<boolean>(false);
   const [snackbar, setSnackbar] = useState<{open: boolean, message: string, severity: 'success'|'error'|'warning'|'info'}>({open: false, message: '', severity: 'info'});
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
@@ -403,276 +391,352 @@ const ChatPage: React.FC = () => {
 
   const currentGptPackageName = selectedGptPackage?.label || 'Paket Seçilmedi';
 
+  // Sidebar genişliğini hesaplayan yardımcı fonksiyon
+  const getSidebarWidth = () => {
+    if (isMobile) return 0;
+    return sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_WIDTH;
+  };
+
   return (
-    <ThemeProvider theme={darkTheme}>
-      <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: 'background.default' }}>
-        {/* Sidebar */}
-        <Drawer
-          variant={isMobile ? 'temporary' : 'permanent'}
-          open={sidebarOpen}
-          onClose={() => setSidebarOpen(false)}
-          PaperProps={{
-            sx: {
-              width: SIDEBAR_WIDTH_OPEN,
-              bgcolor: 'background.paper',
-              borderRight: '1px solid',
-              borderColor: 'divider',
-              boxShadow: 'none',
-              p: 2,
-            }
+    <Box sx={{ 
+      display: 'flex', 
+      minHeight: '100vh',
+      width: '100vw',
+      bgcolor: theme => theme.palette.background.customBackground
+    }}>
+      {/* Drawer */}
+      <Drawer
+        variant={isMobile ? 'temporary' : 'permanent'}
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        sx={{
+          width: getSidebarWidth(),
+          flexShrink: 0,
+          '& .MuiDrawer-paper': {
+            width: getSidebarWidth(),
+            boxSizing: 'border-box',
+            bgcolor: 'background.default',
+            borderRight: 'none',
+            overflowX: 'hidden',
+            transition: theme => theme.transitions.create('width', {
+              easing: theme.transitions.easing.sharp,
+              duration: theme.transitions.duration.enteringScreen,
+            }),
+          },
+        }}
+      >
+        {/* Logo Area */}
+        <Box sx={{ 
+          p: 2, 
+          display: 'flex', 
+          alignItems: 'center', 
+          gap: 1,
+          justifyContent: sidebarCollapsed ? 'center' : 'space-between'
+        }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            {sidebarCollapsed ? (
+              <img src={logoOnly} alt="Logo" style={{ height: 40 }} />
+            ) : (
+              <img src={logoFull} alt="Logo with text" style={{ height: 40 }} />
+            )}
+          </Box>
+          {!isMobile && (
+            <IconButton 
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+              sx={{ display: sidebarCollapsed ? 'none' : 'flex' }}
+            >
+              <ChevronLeftIcon />
+            </IconButton>
+          )}
+        </Box>
+
+        {/* User Profile & Logout */}
+        <Box sx={{ mt: 'auto', p: 2, borderTop: 1, borderColor: 'divider' }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Avatar 
+              src={userInfo?.avatar}
+              sx={{ width: 32, height: 32 }}
+            />
+            {!sidebarCollapsed && (
+              <>
+                <Box sx={{ flex: 1 }}>
+                  <Typography variant="subtitle2">{userInfo?.fullname}</Typography>
+                </Box>
+                <IconButton onClick={handleLogout} size="small">
+                  <LogoutIcon />
+                </IconButton>
+              </>
+            )}
+          </Box>
+        </Box>
+      </Drawer>
+
+      {/* Main Content */}
+      <Box sx={{ 
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        width: '100%',
+        bgcolor: theme => theme.palette.background.default,
+        position: 'relative',
+        minHeight: '100vh',
+        pb: { xs: 10, sm: 12 }, // Chat formun yüksekliği kadar padding
+      }}>
+        {/* AppBar */}
+        <AppBar 
+          position="sticky" 
+          elevation={0}
+          sx={{ 
+            bgcolor: theme => theme.palette.background.customBackground,
+            zIndex: 1100,
+            boxShadow: 'none',
+            border: 'none',
           }}
         >
-          {/* Logo alanı */}
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: sidebarOpen ? 'flex-start' : 'center', height: 64, px: 2, borderBottom: 'none', width: '100%' }}>
-            <ChatIcon color="primary" sx={{ fontSize: 32, mr: sidebarOpen ? 1.5 : 0, transition: 'margin 0.2s' }} />
-            {sidebarOpen && <Typography variant="h6" fontWeight={700} color="primary">Hexense AI</Typography>}
-            {(!isMobile && sidebarOpen) && (
-              <IconButton size="small" onClick={() => setSidebarOpen(false)} sx={{ ml: 'auto', color: 'text.secondary' }}>
-                <CloseIcon />
+          <Toolbar>
+            {isMobile ? (
+              <IconButton edge="start" onClick={() => setSidebarOpen(true)}>
+                <MenuIcon />
               </IconButton>
-            )}
-          </Box>
-          {/* Seçim kutuları ve butonlar */}
-          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: sidebarOpen ? 'flex-start' : 'center', gap: 2, width: '100%', mt: 3, px: sidebarOpen ? 2 : 0 }}>
-            <FormControl size="small" fullWidth={sidebarOpen} sx={{ bgcolor: '#23262F', borderRadius: 2, minWidth: sidebarOpen ? 160 : 48 }}>
-              <Select
-                value={selectedProfileId || ''}
-                onChange={handleProfileChange}
-                displayEmpty
-                renderValue={selected => {
-                  const profile = userProfiles.find(p => p.value === selected);
-                  return profile ? (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <Avatar src={profile.avatar} sx={{ width: 24, height: 24 }} />
-                      {sidebarOpen && <Typography variant="body2">{profile.label}</Typography>}
-                    </Box>
-                  ) : <Typography variant="body2" color="text.secondary">Profil Seçin</Typography>;
-                }}
-                sx={{ '.MuiSelect-select': { p: 0.5, display: 'flex', alignItems: 'center', justifyContent: sidebarOpen ? 'flex-start' : 'center', color: 'text.primary' } }}
-              >
-                {userProfiles.map(profile => (
-                  <MenuItem key={profile.value} value={profile.value} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Avatar src={profile.avatar} sx={{ width: 24, height: 24, mr: 1 }} />
-                    <Typography variant="body2">{profile.label}</Typography>
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <FormControl size="small" fullWidth={sidebarOpen} sx={{ bgcolor: '#23262F', borderRadius: 2, minWidth: sidebarOpen ? 160 : 48 }}>
-              <Select
-                value={selectedGptPackage?.key || ''}
-                onChange={handleGptPackageChange}
-                displayEmpty
-                renderValue={selected => {
-                  const pkg = gptPackages.find(p => p.key === selected);
-                  return pkg ? (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <ScienceIcon color="primary" />
-                      {sidebarOpen && <Typography variant="body2">{pkg.label}</Typography>}
-                    </Box>
-                  ) : <Typography variant="body2" color="text.secondary">GPT Paketi Seçin</Typography>;
-                }}
-                sx={{ '.MuiSelect-select': { p: 0.5, display: 'flex', alignItems: 'center', justifyContent: sidebarOpen ? 'flex-start' : 'center', color: 'text.primary' } }}
-              >
-                {gptPackages.map(pkg => (
-                  <MenuItem key={pkg.key} value={pkg.key} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <ScienceIcon color="primary" sx={{ mr: 1 }} />
-                    <Typography variant="body2">{pkg.label}</Typography>
-                  </MenuItem>
-                ))}
-                {gptPackages.length === 0 && <MenuItem value="" disabled>Paket Yok</MenuItem>}
-              </Select>
-            </FormControl>
-            <Button
-              variant="contained"
-              color="primary"
-              sx={{ borderRadius: '50%', minWidth: 0, width: 48, height: 48, boxShadow: 2, alignSelf: sidebarOpen ? 'flex-start' : 'center', bgcolor: '#23262F', color: 'primary.main', '&:hover': { bgcolor: '#23262F', color: 'primary.light' } }}
-              onClick={handleNewChat}
-            >
-              <AddIcon />
-              {sidebarOpen && <Typography variant="body2" sx={{ ml: 1, fontWeight: 500 }}>Yeni Sohbet</Typography>}
-            </Button>
-          </Box>
-          <Box sx={{ flexGrow: 1 }} />
-          <Box sx={{ display: 'flex', flexDirection: sidebarOpen ? 'row' : 'column', alignItems: 'center', justifyContent: 'center', width: '100%', mb: 2, gap: 1 }}>
-            <Avatar src={userInfo?.avatar} sx={{ width: 40, height: 40 }} />
-            {sidebarOpen && <Typography variant="body2" sx={{ ml: 1 }}>{userInfo?.fullname || 'Kullanıcı'}</Typography>}
-            <IconButton color="default" onClick={handleLogout} title="Çıkış Yap">
-              <LogoutIcon />
-            </IconButton>
-          </Box>
-        </Drawer>
-        {/* Ana içerik */}
-        <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh', position: 'relative', bgcolor: 'background.default' }}>
-          {/* AppBar'ın yüksekliği kadar üstten boşluk */}
-          <Toolbar />
-          {/* Chat akışı alanı */}
-          <Box
-            sx={{
-              flex: 1,
-              width: '100%',
-              maxWidth: { xs: '100%', md: 1200 },
-              mx: 'auto',
-              px: { xs: 1, sm: 2, md: 4 },
-              pb: { xs: 2, sm: 3, md: 4 },
-              pt: 2,
-              overflowY: 'auto',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 3,
-            }}
-          >
-            {/* Paket seçilmediyse uyarı */}
-            {(!selectedGptPackage && gptPackages.length === 0) && (
-              <Alert severity="warning" sx={{ mb: 2 }}>Lütfen önce bir GPT paketi seçin.</Alert>
-            )}
-            {/* Boş chat ekranı */}
-            {messages.length === 0 && !showTypingIndicator && (
-              <Box sx={{ textAlign: 'center', color: '#bbb', my: 6 }}>
-                <ChatIcon sx={{ fontSize: 56, mb: 2 }} />
-                <Typography variant="h5" fontWeight={500}>Sohbet başlatmak için bir mesaj yazın</Typography>
-                <Typography variant="body2" color="text.secondary">veya kenar çubuğundan bir GPT paketi seçin.</Typography>
-              </Box>
-            )}
-            {/* Mesajlar */}
-            {messages.map((msg) => (
-              msg.sender === 'user' ? (
-                <Box
-                  key={msg.id}
-                  sx={{
-                    display: 'flex',
-                    flexDirection: 'row-reverse',
-                    gap: 2,
-                    maxWidth: '85%',
-                    ml: 'auto',
-                  }}
-                >
-                  <Avatar 
-                    sx={{ 
-                      width: 32, 
-                      height: 32,
-                      bgcolor: 'primary.main',
-                      color: 'background.paper',
-                    }}
-                  >
-                    <PersonIcon />
-                  </Avatar>
-                  <Paper
-                    sx={{
-                      p: 2,
-                      bgcolor: 'background.paper',
-                      borderRadius: '16px 16px 4px 16px',
-                      border: '1px solid',
-                      borderColor: 'divider',
-                      boxShadow: 'none',
-                    }}
-                  >
-                    <Typography>{msg.content}</Typography>
-                  </Paper>
-                </Box>
-              ) : (
-                <Box
-                  key={msg.id}
-                  sx={{
-                    display: 'flex',
-                    gap: 2,
-                    maxWidth: '85%',
-                  }}
-                >
-                  <Avatar
-                    sx={{
-                      width: 32,
-                      height: 32,
-                      bgcolor: 'primary.main',
-                      color: 'background.paper',
-                    }}
-                  >
-                    <ScienceIcon />
-                  </Avatar>
-                  <Paper
-                    sx={{
-                      p: 2,
-                      bgcolor: 'background.paper',
-                      borderRadius: '16px 16px 16px 4px',
-                      border: '1px solid',
-                      borderColor: 'divider',
-                      boxShadow: 'none',
-                    }}
-                  >
-                    <Typography
-                      className="markdown-content"
-                      dangerouslySetInnerHTML={{ __html: msg.content }}
-                    />
-                  </Paper>
-                </Box>
+            ) : (
+              sidebarCollapsed && (
+                <IconButton edge="start" onClick={() => setSidebarCollapsed(false)}>
+                  <ChevronRightIcon />
+                </IconButton>
               )
-            ))}
-            {/* Asistan yazıyor animasyonu */}
-            {showTypingIndicator && (
-              <Box sx={{ display: 'flex', flexDirection: 'row', alignItems: 'flex-end', gap: 1.5, width: '100%' }}>
-                <Avatar sx={{ width: 32, height: 32, bgcolor: '#23262F', color: 'primary.main', fontWeight: 700 }}>
-                  <ScienceIcon />
-                </Avatar>
-                <Box sx={{ flex: 1, px: 0, py: 0, bgcolor: 'transparent', color: '#fff', fontSize: 16, lineHeight: 1.7, maxWidth: '100%', wordBreak: 'break-word', borderRadius: 0, display: 'flex', alignItems: 'center', gap: 1 }}>
-                  {selectedGptPackage && <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mr: 1 }}>{selectedGptPackage.label}</Typography>}
-                  <HourglassEmptyIcon sx={{ fontSize: 18, color: 'primary.main' }} />
-                </Box>
-              </Box>
             )}
-          </Box>
-          {/* Chat formu: sabit, ekranın en altında, responsive padding ve genişlik */}
-          <Paper
-            elevation={0}
-            sx={{
-              position: 'sticky',
-              bottom: 0,
-              p: 2,
-              bgcolor: 'background.default',
-              borderTop: '1px solid',
-              borderColor: 'divider',
-            }}
-          >
-            <Box
-              sx={{
-                maxWidth: CHAT_MAX_WIDTH,
-                mx: 'auto',
-                display: 'flex',
-                gap: 2,
-              }}
-            >
-              <TextField
-                fullWidth
-                multiline
-                maxRows={4}
-                placeholder="Mesajınızı yazın..."
-                value={currentMessageInput}
-                onChange={handleMessageInputChange}
-                variant="outlined"
+            {/* Profile & Package Selectors */}
+            <Box sx={{ display: 'flex', gap: 2, flex: 1, justifyContent: 'center' }}>
+              <FormControl size="small" sx={{ minWidth: 200 }}>
+                <Select
+                  value={selectedProfileId || ''}
+                  onChange={handleProfileChange}
+                  variant="outlined"
+                  sx={{
+                    borderRadius: '999px',
+                    background: theme => theme.palette.background.paper,
+                    boxShadow: 2,
+                    border: 'none',
+                    '& .MuiOutlinedInput-notchedOutline': {
+                      border: 'none',
+                    },
+                    '& .MuiSelect-select': {
+                      borderRadius: '999px',
+                      background: theme => theme.palette.background.paper,
+                      px: 2,
+                    },
+                  }}
+                  MenuProps={{
+                    PaperProps: {
+                      sx: {
+                        borderRadius: '16px',
+                        boxShadow: 4,
+                        bgcolor: theme => theme.palette.background.paper,
+                      }
+                    }
+                  }}
+                >
+                  {userProfiles.map(profile => (
+                    <MenuItem key={profile.value} value={profile.value}>
+                      {profile.label}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <FormControl size="small" sx={{ minWidth: 200 }}>
+                <Select
+                  value={selectedGptPackage?.key || ''}
+                  onChange={handleGptPackageChange}
+                  variant="outlined"
+                  sx={{
+                    borderRadius: '999px',
+                    background: theme => theme.palette.background.paper,
+                    boxShadow: 2,
+                    border: 'none',
+                    '& .MuiOutlinedInput-notchedOutline': {
+                      border: 'none',
+                    },
+                    '& .MuiSelect-select': {
+                      borderRadius: '999px',
+                      background: theme => theme.palette.background.paper,
+                      px: 2,
+                    },
+                  }}
+                  MenuProps={{
+                    PaperProps: {
+                      sx: {
+                        borderRadius: '16px',
+                        boxShadow: 4,
+                        bgcolor: theme => theme.palette.background.paper,
+                      }
+                    }
+                  }}
+                >
+                  {gptPackages.map(pkg => (
+                    <MenuItem key={pkg.key} value={pkg.key}>
+                      {pkg.label}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Box>
+          </Toolbar>
+        </AppBar>
+
+        {/* Chat Messages */}
+        <Box 
+          ref={chatBoxRef}
+          sx={{ 
+            flex: 1, 
+            width: '100%',
+            overflowY: 'auto',
+            bgcolor: theme => theme.palette.background.customBackground,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 2,
+            px: { xs: 2, sm: 4, md: 6 },
+            py: 3,
+            maxWidth: '100vw',
+            boxSizing: 'border-box',
+            // Chat formun yüksekliği kadar alt padding bırak
+            pb: { xs: 10, sm: 12 },
+          }}
+        >
+          <Box sx={{
+            width: '100%',
+            maxWidth: '1200px',
+            mx: 'auto',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 2,
+          }}>
+            {messages.map(msg => (
+              <Box
+                key={msg.id}
+                className="message-container"
                 sx={{
-                  '& .MuiOutlinedInput-root': {
-                    bgcolor: 'background.paper',
-                    borderRadius: 2,
-                  }
-                }}
-              />
-              <IconButton
-                onClick={handleSendMessage}
-                disabled={isSendingMessage}
-                sx={{
-                  bgcolor: 'primary.main',
-                  color: 'background.paper',
-                  '&:hover': {
-                    bgcolor: 'primary.dark',
+                  display: 'flex',
+                  flexDirection: msg.sender === 'user' ? 'row-reverse' : 'row',
+                  gap: 2,
+                  width: '100%',
+                  '& > .MuiBox-root': {
+                    maxWidth: msg.sender === 'user' ? '70%' : '100%',
                   }
                 }}
               >
-                <SendIcon />
+                <Avatar
+                  sx={{
+                    width: 32,
+                    height: 32,
+                    bgcolor: msg.sender === 'user' ? 'primary.main' : 'background.paper',
+                    flexShrink: 0,
+                  }}
+                >
+                  {msg.sender === 'user' ? <PersonIcon /> : <ScienceIcon />}
+                </Avatar>
+                <Box sx={{ flex: 1 }}>
+                  {msg.sender === 'assistant' && (
+                    <Typography variant="caption" color="text.secondary">
+                      {msg.gptPackageName} • {new Date(msg.timestamp).toLocaleTimeString()}
+                    </Typography>
+                  )}
+                  <Paper
+                    sx={{
+                      p: 2,
+                      mt: 0.5,
+                      bgcolor: msg.sender === 'user' ? 'primary.main' : 'background.paper',
+                      color: msg.sender === 'user' ? 'background.paper' : 'text.primary',
+                      borderRadius: msg.sender === 'user' ? '20px 20px 4px 20px' : '20px 20px 20px 4px',
+                      boxShadow: 'none',
+                      border: 'none',
+                    }}
+                  >
+                    {msg.sender === 'assistant' ? (
+                      <div
+                        dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(msg.content) }}
+                      />
+                    ) : (
+                      <Typography>{msg.content}</Typography>
+                    )}
+                  </Paper>
+                </Box>
+              </Box>
+            ))}
+          </Box>
+        </Box>
+
+        {/* Chat Input - Sabit Alt Form */}
+        <Box
+          sx={{
+            position: 'fixed',
+            left: { xs: 0, sm: getSidebarWidth() },
+            bottom: 0,
+            width: { xs: '100vw', sm: `calc(100vw - ${getSidebarWidth()}px)` },
+            bgcolor: theme => theme.palette.background.customBackground,
+            zIndex: 1200,
+            boxShadow: 'none',
+            px: { xs: 2, sm: 4, md: 6 },
+            py: 2,
+            maxWidth: '100vw',
+          }}
+        >
+          <Box sx={{ 
+            maxWidth: '1200px',
+            mx: 'auto',
+          }}>
+            <TextField
+              fullWidth
+              multiline
+              maxRows={4}
+              placeholder="Mesajınızı yazın..."
+              value={currentMessageInput}
+              onChange={handleMessageInputChange}
+              variant="outlined"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSendMessage();
+                }
+              }}
+              sx={{
+                '& .MuiOutlinedInput-root': {
+                  bgcolor: 'background.paper',
+                }
+              }}
+            />
+            <Box sx={{
+              display: 'flex',
+              gap: 1,
+              alignItems: 'center',
+              justifyContent: 'flex-end',
+              mt: 1,
+              p: 1,
+              bgcolor: 'background.default',
+              borderRadius: 2,
+              boxShadow: 1,
+            }}>
+              <IconButton size="small" onClick={handleNewChat}>
+                <AddIcon fontSize="small" />
+              </IconButton>
+              <IconButton size="small">
+                <MicIcon fontSize="small" />
+              </IconButton>
+              <IconButton size="small">
+                <CameraAltIcon fontSize="small" />
+              </IconButton>
+              <IconButton 
+                size="small"
+                onClick={handleSendMessage}
+                disabled={!currentMessageInput.trim()}
+                color="primary"
+              >
+                <SendIcon fontSize="small" />
               </IconButton>
             </Box>
-          </Paper>
+          </Box>
         </Box>
       </Box>
-    </ThemeProvider>
+    </Box>
   );
 };
 

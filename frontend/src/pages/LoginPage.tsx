@@ -5,6 +5,7 @@ import { AccountCircle, Lock } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import type { ApiError } from '../types'; // Tiplerimizi import edelim
 import api from '../services/api';
+import logoFull from '../assets/logo/logo_full.png';
 
 const LoginPage: React.FC = () => {
   const API_HOST = import.meta.env.VITE_APP_API_HOST;
@@ -60,11 +61,10 @@ const LoginPage: React.FC = () => {
   }, []);
 
   return (
-    <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', width: '100vw', bgcolor: '#f0f2f5' }}>
-      <Card sx={{ width: 400, boxShadow: 3, p: 4 }}>
+    <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', width: '100vw', bgcolor: theme => theme.palette.background.customBackground }}>
+      <Card sx={{ width: 400, boxShadow: 3, p: 4, bgcolor: theme => theme.palette.background.paper, borderRadius: 4 }}>
         <Box sx={{ textAlign: 'center', mb: 4 }}>
-          {/* <img src="/path/to/your/logo.png" alt="Hexense Logo" style={{ height: 60, marginBottom: 16 }} /> */}
-          <Typography variant="h4" color="primary" fontWeight={700} gutterBottom>Hexense AI Platform</Typography>
+          <img src={logoFull} alt="Hexense Logo" style={{ height: 48, marginBottom: 16 }} />
         </Box>
         {error && <Alert severity="error" sx={{ mb: 3 }}>{error}</Alert>}
         <form onSubmit={onSubmit} autoComplete="off">
