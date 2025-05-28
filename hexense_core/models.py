@@ -14,10 +14,7 @@ import open_clip
 from PIL import Image
 import io
 import pandas as pd
-
-QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
-_embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-qdrant_client = QdrantClient(QDRANT_URL)
+from hexense_core.semantic import get_embedding, add_to_qdrant, search_qdrant, update_qdrant_metadata, delete_from_qdrant
 
 # CLIP model yüklemesi (ilk kullanımda yüklenir)
 _clip_model = None
@@ -265,6 +262,7 @@ class GptPackage(models.Model):
         super().save(*args, **kwargs)
         # Qdrant koleksiyonu oluşturulmamışsa oluştur
         try:
+            # Koleksiyon kontrolü semantic.py'ye taşınabilir, şimdilik olduğu gibi bırakıldı
             qdrant_client.get_collection("gpt_packages")
         except Exception:
             qdrant_client.recreate_collection(
@@ -273,34 +271,20 @@ class GptPackage(models.Model):
             )
         # Embedding oluştur
         description = f"{self.name}: {self.description}"
-        embedding = _embedding_model.encode(description).tolist()
-        # Qdrant'a ekle/güncelle
-        qdrant_client.upsert(
-            collection_name="gpt_packages",
-            points=[
-                qdrant_models.PointStruct(
-                    id=str(self.id),
-                    vector=embedding,
-                    payload={
-                        "gpt_package_id": str(self.id),
-                        "group_id": str(self.group.id),
-                        "group_name": self.group.name,
-                        "group_key": self.group.key,
-                        "name": self.name,
-                        "key": self.key
-                    }
-                )
-            ]
-        )
+        payload = {
+            "id": str(self.id),
+            "gpt_package_id": str(self.id),
+            "group_id": str(self.group.id),
+            "group_name": self.group.name,
+            "group_key": self.group.key,
+            "name": self.name,
+            "key": self.key
+        }
+        add_to_qdrant("gpt_packages", description, payload)
 
     def delete(self, *args, **kwargs):
         # Qdrant'tan sil
-        qdrant_client.delete(
-            collection_name="gpt_packages",
-            points_selector=qdrant_models.PointIdsList(
-                points=[str(self.id)]
-            )
-        )
+        delete_from_qdrant("gpt_packages", [str(self.id)])
         super().delete(*args, **kwargs)
 
 
@@ -494,6 +478,7 @@ class GptPackageFile(models.Model):
         super().save(*args, **kwargs)
         QDRANT_FILE_COLLECTION = 'gpt_package_files'
         try:
+            # Koleksiyon kontrolü semantic.py'ye taşınabilir, şimdilik olduğu gibi bırakıldı
             qdrant_client.get_collection(QDRANT_FILE_COLLECTION)
         except Exception:
             qdrant_client.recreate_collection(
@@ -513,7 +498,7 @@ class GptPackageFile(models.Model):
             table_chunks = self.chunk_table(text)
             for chunk_idx, (chunk_lines, start_row, end_row) in enumerate(table_chunks):
                 chunk_text = '\n'.join(chunk_lines)
-                embedding = _embedding_model.encode(chunk_text).tolist()
+                embedding = get_embedding(chunk_text)
                 points.append(
                     qdrant_models.PointStruct(
                         id=f"{self.id}_table_{chunk_idx}",
@@ -535,7 +520,7 @@ class GptPackageFile(models.Model):
             chunk_heading_pairs = self.chunk_text(text)
             for chunk_idx, (chunk, heading) in enumerate(chunk_heading_pairs):
                 chunk_text = '\n'.join([p[1] for p in chunk])
-                embedding = _embedding_model.encode(chunk_text).tolist()
+                embedding = get_embedding(chunk_text)
                 para_indices = [p[0] for p in chunk]
                 points.append(
                     qdrant_models.PointStruct(
@@ -580,7 +565,8 @@ class GptPackageFile(models.Model):
                     except Exception:
                         continue
         if points:
-            qdrant_client.upsert(collection_name=QDRANT_FILE_COLLECTION, points=points)
+            for point in points:
+                add_to_qdrant(QDRANT_FILE_COLLECTION, "", point.payload | {"id": point.id})
 
     def delete(self, *args, **kwargs):
         QDRANT_FILE_COLLECTION = 'gpt_package_files'
@@ -595,10 +581,7 @@ class GptPackageFile(models.Model):
                 chunk_heading_pairs = self.chunk_text(text)
                 point_ids = [f"{self.id}_text_{i}" for i in range(len(chunk_heading_pairs))]
                 point_ids += [f"{self.id}_image_{i}" for i in range(len(images))]
-            qdrant_client.delete(
-                collection_name=QDRANT_FILE_COLLECTION,
-                points_selector=qdrant_models.PointIdsList(points=point_ids)
-            )
+            delete_from_qdrant(QDRANT_FILE_COLLECTION, point_ids)
         except Exception:
             pass
         super().delete(*args, **kwargs)

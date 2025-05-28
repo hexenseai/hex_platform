@@ -134,6 +134,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 if not self.conversation:
                     self.conversation = await self.get_or_create_conversation_for_gpt_package()
 
+                # Burada yeni kontrolü ekle:
+                can_continue = await self.evaluate_gpt_package(message_content)
+                if not can_continue:
+                    return
+
                 # Dinamik GPT paketi değiştirme mantığı (opsiyonel, şimdilik devre dışı bırakılabilir)
                 # await self.check_and_switch_gpt_package(message_content)
                 # Eğer GPT paketi değiştiyse, self.conversation da güncellenmiş olmalı.
@@ -421,6 +426,72 @@ class ChatConsumer(AsyncWebsocketConsumer):
             logger.error(f"Error in generate_response_from_dispatcher: {e}", exc_info=True)
             await self.send_error(f"Yanıt üretirken bir hata oluştu: {str(e)}")
 
+    async def evaluate_gpt_package(self, user_input: str, conversation_summary: Optional[str] = None) -> bool:
+        """
+        1. Context ve tool uygunluğunu kontrol eder.
+        2. Gerekirse semantic arama ile yeni bir GPT paketi önerir.
+        3. Uygun paket yoksa kullanıcıya kapsam dışı mesajı döner.
+        """
+        # 1. Context uygunluğu kontrolü
+        if not self.is_context_compatible(self.gpt_package, conversation_summary):
+            # Uygun değilse semantic arama ile yeni paket bul
+            return await self.switch_gpt_package_by_semantic(user_input)
+
+        # 2. Tool uygunluğu kontrolü
+        required_tool = self.extract_required_tool(user_input)
+        if required_tool and not self.gpt_package_has_tool(self.gpt_package, required_tool):
+            # Gerekli tool yoksa semantic arama ile yeni paket bul
+            return await self.switch_gpt_package_by_semantic(user_input, required_tool)
+
+        # Her şey uygunsa devam et
+        return True
+
+    def is_context_compatible(self, gpt_package, conversation_summary):
+        """
+        Burada context ve gpt_package uyumluluğu kontrol edilir.
+        Örneğin: conversation_summary, gpt_package'ın supported_contexts veya capabilities'inde mi?
+        Şimdilik her zaman True döndürülüyor.
+        """
+        # TODO: Gerçek context uyumluluk kontrolü eklenebilir.
+        return True
+
+    def extract_required_tool(self, user_input):
+        """
+        Kullanıcı mesajından hangi tool gerektiğini çıkarır (intent extraction, keyword, vs.).
+        Örneğin: "tabloyu özetle" -> "table_summarizer"
+        Şimdilik None döndürülüyor.
+        """
+        # TODO: Gelişmiş intent extraction eklenebilir.
+        return None
+
+    def gpt_package_has_tool(self, gpt_package, tool_key):
+        """
+        gpt_package.services.all() içinde tool_key var mı?
+        """
+        if not gpt_package or not hasattr(gpt_package, 'services'):
+            return False
+        return any(service.key == tool_key for service in gpt_package.services.all())
+
+    async def switch_gpt_package_by_semantic(self, user_input, required_tool=None):
+        """
+        find_best_gpt_package fonksiyonunu çağırır, gerekirse required_tool'u da dikkate alır.
+        """
+        # TODO: required_tool parametresi semantic aramaya entegre edilebilir.
+        best_package_info = await sync_to_async(find_best_gpt_package)(user_input)
+        if best_package_info:
+            best_package, score = best_package_info
+            if best_package and score > self.similarity_threshold:
+                self.gpt_package = best_package
+                self.conversation = await self.get_or_create_conversation_for_gpt_package(force_new=True)
+                await self.send(text_data=json.dumps({
+                    "type": "gpt_package_switched",
+                    "new_gpt_package_id": str(self.gpt_package.id),
+                    "new_gpt_package_name": self.gpt_package.name,
+                    "conversation_id": str(self.conversation.id)
+                }))
+                return True
+        await self.send_error("Bu konu mevcut paketlerle yanıtlanamıyor.")
+        return False
 
     # `change_context` ve `change_gpt_package` (veya `check_and_switch_gpt_package`)
     # metodları, konuşma bağımsız hafıza ve dinamik GPT geçişleri için daha sonra
