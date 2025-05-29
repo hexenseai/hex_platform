@@ -57,7 +57,8 @@ def switch_gpt(intent_description: str, **kwargs):
         }
 
     try:
-        best_package, score = find_best_gpt_package(intent_description)
+        user_profile = kwargs.get('user_profile')
+        best_package, score = find_best_gpt_package(intent_description, user_profile)
         return {
             "message": f"'{best_package.name}' GPT yardımcısına geçiliyor.",
             "target_package_id": str(best_package.id),

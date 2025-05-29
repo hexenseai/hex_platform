@@ -10,21 +10,37 @@ QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
 _embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
 qdrant_client = QdrantClient(QDRANT_URL)
 
-def find_best_gpt_package(user_input: str) -> Tuple[GptPackage, float]:
+def find_best_gpt_package(user_input: str, user_profile) -> Tuple[GptPackage, float]:
+    """
+    Kullanıcının profiline atanmış ve modeli aktif olan GPT paketleri arasında en iyi eşleşeni bulur.
+    Gelecekte kullanımı olan (modeli aktif olmayan) paketleri hariç tutar.
+    """
+    # Kullanıcının rolüne atanmış ve modeli aktif olan paketleri bul
+    allowed_packages = GptPackage.objects.filter(
+        allowed_roles=user_profile.role,
+        model__is_active=True
+    ).distinct()
+    if not allowed_packages.exists():
+        return None, 0.0
+
+    # Qdrant'ta sadece bu paketler arasında arama yapmak için filtre uygula
+    # Qdrant payload'unda gpt_package_id var, allowed_packages'ın id'leriyle filtrele
+    allowed_ids = set(str(pkg.id) for pkg in allowed_packages)
     query_embedding = get_embedding(user_input)
     search_result = qdrant_client.search(
         collection_name="gpt_packages",
         query_vector=query_embedding,
-        limit=1,
+        limit=5,  # Birden fazla döndürüp ilk uygun olanı seçmek için
         with_payload=True
     )
-    if not search_result:
-        return None, 0.0
-    payload = search_result[0].payload
-    gpt_package_id = payload.get("gpt_package_id")
-    score = search_result[0].score
-    pkg = GptPackage.objects.filter(id=gpt_package_id).first()
-    return pkg, score
+    for result in search_result:
+        payload = result.payload
+        gpt_package_id = payload.get("gpt_package_id")
+        if gpt_package_id in allowed_ids:
+            score = result.score
+            pkg = allowed_packages.filter(id=gpt_package_id).first()
+            return pkg, score
+    return None, 0.0
 
 def get_embedding(text: str) -> list:
     """

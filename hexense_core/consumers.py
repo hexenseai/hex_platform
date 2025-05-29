@@ -477,7 +477,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         find_best_gpt_package fonksiyonunu çağırır, gerekirse required_tool'u da dikkate alır.
         """
         # TODO: required_tool parametresi semantic aramaya entegre edilebilir.
-        best_package_info = await sync_to_async(find_best_gpt_package)(user_input)
+        best_package_info = await sync_to_async(find_best_gpt_package)(user_input, self.user_profile)
         if best_package_info:
             best_package, score = best_package_info
             if best_package and score > self.similarity_threshold:

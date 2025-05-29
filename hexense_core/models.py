@@ -14,7 +14,13 @@ import open_clip
 from PIL import Image
 import io
 import pandas as pd
-from hexense_core.semantic import get_embedding, add_to_qdrant, search_qdrant, update_qdrant_metadata, delete_from_qdrant
+from hexense_core.semantic import (
+    get_embedding,
+    add_to_qdrant,
+    update_qdrant_metadata,
+    delete_from_qdrant,
+    ensure_collection_exists
+)
 
 # CLIP model yüklemesi (ilk kullanımda yüklenir)
 _clip_model = None
@@ -104,8 +110,8 @@ class Conversation(models.Model):
     user_profile = models.ForeignKey('UserProfile', null=True, blank=True, on_delete=models.SET_NULL, related_name='conversations')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    topic = models.TextField(blank=True, null=True, help_text="Konuşmanın özet başlığı veya konusu")
-    topic_embedding = models.JSONField(blank=True, null=True, help_text="Konuşma başlığının embedding vektörü")
+    context = models.TextField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
     
     # İleride GPT paket bilgisi eklenebilir
     def __str__(self):
@@ -115,15 +121,39 @@ class Conversation(models.Model):
         verbose_name = "Conversation"
         verbose_name_plural = "Agent Management: Conversations"
 
+    def save(self, *args, **kwargs):
+        is_new = not self.pk  # Check if this is a new record
+        if not is_new:
+            # If updating existing record, delete old embedding first
+            delete_from_qdrant("conversations", [str(self.id)])
+        super().save(*args, **kwargs)
+        embedding = get_embedding(self.context or "")
+        payload = {
+            "conversation_id": str(self.id),
+            "is_active": self.is_active,
+            "created_at": self.created_at.isoformat(),
+        }
+        add_to_qdrant("conversations", self.context or "", payload, vector=embedding, point_id=str(self.id))
+
+    def delete(self, *args, **kwargs):
+        delete_from_qdrant("conversations", [str(self.id)])
+        super().delete(*args, **kwargs)
+
 
 class Message(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, related_name='messages')
-    sender = models.CharField(max_length=10, choices=[('user', 'User'), ('gpt', 'GPT')])
+    SENDER_CHOICES = [
+        ('user', 'User'),
+        ('assistant', 'Assistant'),
+        ('tool', 'Tool'),
+    ]
+    sender = models.CharField(max_length=10, choices=SENDER_CHOICES)
     content = models.TextField()
     gpt_package = models.ForeignKey('GptPackage', null=True, blank=True, on_delete=models.SET_NULL)
     actions = models.JSONField(blank=True, null=True)
     timestamp = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=True)
 
     def __str__(self):
         return f"{self.sender}: {self.content[:50]}"
@@ -131,6 +161,28 @@ class Message(models.Model):
     class Meta:
         verbose_name = "Message"
         verbose_name_plural = "Agent Management: Messages"
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        embedding = get_embedding(self.content)
+        payload = {
+            "conversation_id": str(self.conversation_id),
+            "gpt_package_id": str(self.gpt_package_id) if self.gpt_package_id else None,
+            "timestamp": self.timestamp.isoformat(),
+            "message_id": str(self.id),
+            "sender": self.sender,
+            "is_active": self.is_active,
+        }
+        add_to_qdrant("messages", self.content, payload, vector=embedding, point_id=str(self.id))
+
+    def delete(self, *args, **kwargs):
+        delete_from_qdrant("messages", [str(self.id)])
+        super().delete(*args, **kwargs)
+
+    def set_active(self, is_active: bool):
+        self.is_active = is_active
+        self.save()
+        update_qdrant_metadata("messages", str(self.id), {"is_active": is_active})
 
 
 import uuid
@@ -261,14 +313,8 @@ class GptPackage(models.Model):
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
         # Qdrant koleksiyonu oluşturulmamışsa oluştur
-        try:
-            # Koleksiyon kontrolü semantic.py'ye taşınabilir, şimdilik olduğu gibi bırakıldı
-            qdrant_client.get_collection("gpt_packages")
-        except Exception:
-            qdrant_client.recreate_collection(
-                collection_name="gpt_packages",
-                vectors_config=qdrant_models.VectorParams(size=384, distance="Cosine")
-            )
+        # Koleksiyon kontrolü semantic.py'ye taşındı
+        ensure_collection_exists("gpt_packages", vector_size=384)
         # Embedding oluştur
         description = f"{self.name}: {self.description}"
         payload = {
@@ -478,13 +524,10 @@ class GptPackageFile(models.Model):
         super().save(*args, **kwargs)
         QDRANT_FILE_COLLECTION = 'gpt_package_files'
         try:
-            # Koleksiyon kontrolü semantic.py'ye taşınabilir, şimdilik olduğu gibi bırakıldı
-            qdrant_client.get_collection(QDRANT_FILE_COLLECTION)
+            # Koleksiyon kontrolü semantic.py'ye taşındı
+            ensure_collection_exists(QDRANT_FILE_COLLECTION, vector_size=384)
         except Exception:
-            qdrant_client.recreate_collection(
-                collection_name=QDRANT_FILE_COLLECTION,
-                vectors_config=qdrant_models.VectorParams(size=384, distance="Cosine")
-            )
+            pass
         try:
             text, images = self.get_file_content()
         except Exception:
