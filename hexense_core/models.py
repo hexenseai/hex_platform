@@ -14,13 +14,6 @@ import open_clip
 from PIL import Image
 import io
 import pandas as pd
-from hexense_core.semantic import (
-    get_embedding,
-    add_to_qdrant,
-    update_qdrant_metadata,
-    delete_from_qdrant,
-    ensure_collection_exists
-)
 
 # CLIP model yüklemesi (ilk kullanımda yüklenir)
 _clip_model = None
@@ -124,9 +117,10 @@ class Conversation(models.Model):
     def save(self, *args, **kwargs):
         is_new = not self.pk  # Check if this is a new record
         if not is_new:
-            # If updating existing record, delete old embedding first
+            from hexense_core.semantic import delete_from_qdrant
             delete_from_qdrant("conversations", [str(self.id)])
         super().save(*args, **kwargs)
+        from hexense_core.semantic import get_embedding, add_to_qdrant
         embedding = get_embedding(self.context or "")
         payload = {
             "conversation_id": str(self.id),
@@ -136,6 +130,7 @@ class Conversation(models.Model):
         add_to_qdrant("conversations", self.context or "", payload, vector=embedding, point_id=str(self.id))
 
     def delete(self, *args, **kwargs):
+        from hexense_core.semantic import delete_from_qdrant
         delete_from_qdrant("conversations", [str(self.id)])
         super().delete(*args, **kwargs)
 
@@ -164,6 +159,7 @@ class Message(models.Model):
 
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
+        from hexense_core.semantic import get_embedding, add_to_qdrant
         embedding = get_embedding(self.content)
         payload = {
             "conversation_id": str(self.conversation_id),
@@ -176,12 +172,14 @@ class Message(models.Model):
         add_to_qdrant("messages", self.content, payload, vector=embedding, point_id=str(self.id))
 
     def delete(self, *args, **kwargs):
+        from hexense_core.semantic import delete_from_qdrant
         delete_from_qdrant("messages", [str(self.id)])
         super().delete(*args, **kwargs)
 
     def set_active(self, is_active: bool):
         self.is_active = is_active
         self.save()
+        from hexense_core.semantic import update_qdrant_metadata
         update_qdrant_metadata("messages", str(self.id), {"is_active": is_active})
 
 
