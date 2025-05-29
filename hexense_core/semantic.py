@@ -4,6 +4,8 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models as qdrant_models
 from typing import Tuple
 import os
+from hexense_core import llm_dispatcher
+import asyncio
 
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
 
@@ -54,20 +56,15 @@ def get_embedding(text: str) -> list:
     """
     return _embedding_model.encode(text).tolist()
 
-def add_to_qdrant(collection_name: str, text: str, payload: dict) -> bool:
+def add_to_qdrant(collection_name: str, text: str, payload: dict, context_type: str = "summary") -> bool:
     """
     Add a text and its associated payload to specified Qdrant collection.
-    
-    Args:
-        collection_name (str): Name of the Qdrant collection
-        text (str): Text to generate embedding for
-        payload (dict): Metadata/payload to store with the embedding
-        
-    Returns:
-        bool: True if successful, False otherwise
+    context_type: summary, full, etc.
     """
     try:
         embedding = get_embedding(text)
+        payload = dict(payload)
+        payload["context_type"] = context_type
         qdrant_client.upsert(
             collection_name=collection_name,
             points=[
@@ -164,4 +161,37 @@ def delete_from_qdrant(collection_name: str, point_ids: list) -> bool:
     except Exception as e:
         print(f"Error deleting from Qdrant: {e}")
         return False
+
+async def summarize_context(text: str, user_profile=None, gpt_package=None) -> str:
+    """
+    LLM ile context özetleme. llm_dispatcher.summarize_context fonksiyonunu çağırır.
+    """
+    # llm_dispatcher'da async fonksiyon, burada sync çağrı için event loop kullanıyoruz
+    if hasattr(llm_dispatcher, "summarize_context"):
+        if asyncio.get_event_loop().is_running():
+            return await llm_dispatcher.summarize_context(text, user_profile, gpt_package)
+        else:
+            return asyncio.run(llm_dispatcher.summarize_context(text, user_profile, gpt_package))
+    # Fallback: ilk 300 karakter
+    return text[:300] + ("..." if len(text) > 300 else "")
+
+def search_memory_contexts(user_profile_id: str, query: str, limit: int = 3) -> list:
+    """
+    Kullanıcıya ait geçmiş context özetlerini semantik olarak arar.
+    """
+    filter_dict = {"user_profile_id": str(user_profile_id), "context_type": "summary"}
+    results = search_qdrant(
+        collection_name="conversation_contexts",
+        text=query,
+        filter=filter_dict,
+        limit=limit
+    )
+    memory_contexts = []
+    for r in results:
+        payload = r.payload
+        memory_contexts.append({
+            "summary": payload.get("summary", ""),
+            "timestamp": payload.get("timestamp", "")
+        })
+    return memory_contexts
 

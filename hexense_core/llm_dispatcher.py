@@ -139,7 +139,15 @@ def get_gpt_package_services(gpt_package: GptPackage) -> List[Dict[str, Any]]:
         logger.error(f"Error processing services for GptPackage {gpt_package.name}: {e}", exc_info=True)
     return tools
 
-async def build_system_prompt(user_profile: UserProfile, gpt_package: GptPackage, provider: Optional[str] = None) -> str:
+async def summarize_context(text: str, user_profile: UserProfile = None, gpt_package: GptPackage = None) -> str:
+    """
+    LLM ile context özetleme. (Basit bir OpenAI çağrısı örneği, gerçek modelle değiştirilebilir.)
+    """
+    # Burada OpenAI veya başka bir model ile özetleme yapılabilir.
+    # Şimdilik ilk 300 karakteri döndürüyoruz.
+    return text[:300] + ("..." if len(text) > 300 else "")
+
+async def build_system_prompt(user_profile: UserProfile, gpt_package: GptPackage, provider: Optional[str] = None, memory_contexts: Optional[list] = None) -> str:
     username = user_profile.user.get_full_name() or user_profile.user.username
     gpt_preferences = user_profile.gpt_preferences or ""
     work_experience = user_profile.work_experience_notes or ""
@@ -232,7 +240,12 @@ Kullanıcının işini kolaylaştırmak, ona doğru ve etkili bilgiler sunmak, �
 """
     if gpt_package.system_prompt:
         base_prompt += f"\n\n📘 Ek Sistem Talimatları ({gpt_package_name}):\n{gpt_package.system_prompt}"
-    
+    # --- Hafıza/memory context'leri ekle ---
+    if memory_contexts:
+        memory_block = "\n\n[Geçmiş Konuşma Hafızası]:\n" + "\n".join([
+            f"[{ctx['timestamp']}] {ctx['summary']}" for ctx in memory_contexts
+        ])
+        base_prompt += memory_block
     if provider and provider.lower() in ["anthropic", "gemini"] and tools_for_prompt:
         base_prompt += """
 

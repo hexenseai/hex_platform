@@ -11,12 +11,15 @@ from hexense_core.models import Conversation, Message, UserProfile, GptPackage
 from hexense_core.semantic import find_best_gpt_package # Bu hala kullanılacak
 from hexense_core.utils import run_tool # Araçları çalıştırmak için
 from hexense_core import llm_dispatcher # Yeni dispatcher'ımızı import edelim
+from hexense_core import semantic
 
 
 logger = logging.getLogger(__name__)
 
 class ChatConsumer(AsyncWebsocketConsumer):
     similarity_threshold = 0.85 # Bu değer config'den alınabilir
+    memory_context_limit = 3  # Qdrant'tan çekilecek geçmiş context sayısı
+    context_summary_trigger = 8  # Kaç mesajda bir özet alınacak
 
     async def connect(self):
         self.user = self.scope.get('user')
@@ -45,6 +48,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
         # Kullanıcı profillerini ve ilk GPT paketini yükleme mantığı `receive` içinde
         # "profile_change" ve "gpt_package_change" ile yönetilecek.
         # Frontend ilk bağlandığında varsayılan profili ve paketi gönderebilir.
+
+        self.conversations_pool = {}  # {conversation_id: {"summary": ..., "embedding": ..., "timestamp": ...}}
 
     async def disconnect(self, close_code):
         logger.info(f"WebSocket disconnected for user {self.user.username} with code {close_code}")
@@ -129,34 +134,43 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     await self.send_error("Mesaj göndermeden önce profil ve GPT paketi seçmelisiniz.")
                     return
 
-                # Eğer aktif bir konuşma yoksa veya GPT paketi değiştiyse,
-                # uygun bir konuşma bul veya oluştur.
                 if not self.conversation:
                     self.conversation = await self.get_or_create_conversation_for_gpt_package()
 
-                # Burada yeni kontrolü ekle:
                 can_continue = await self.evaluate_gpt_package(message_content)
                 if not can_continue:
                     return
 
-                # Dinamik GPT paketi değiştirme mantığı (opsiyonel, şimdilik devre dışı bırakılabilir)
-                # await self.check_and_switch_gpt_package(message_content)
-                # Eğer GPT paketi değiştiyse, self.conversation da güncellenmiş olmalı.
-
-                # Kullanıcı mesajını veritabanına kaydet
                 await Message.objects.acreate(
                     conversation=self.conversation,
                     sender='user',
                     content=message_content,
-                    gpt_package=self.gpt_package # Hangi paketle gönderildiği bilgisi
+                    gpt_package=self.gpt_package
                 )
-                
-                # LLM'e göndermek için mesaj geçmişini hazırla
+
+                # --- KONUŞMA KONTEXTİ ÖZETLEME ve QDRANT'A KAYIT ---
+                await self.maybe_update_conversation_summary()
+
+                # --- HAFIZA ARAMASI: QDRANT'TAN GEÇMİŞ KONUMLARI ÇEK ---
+                memory_contexts = await self.search_memory_contexts(message_content)
+
+                # --- LLM'E GÖNDERİLECEK MESAJ GEÇMİŞİNİ HAZIRLA ---
                 history_messages = await self.prepare_message_history()
                 history_messages.append({"role": "user", "content": message_content})
 
-                # Yanıtı generate_response ile al ve stream et
-                await self.generate_response_from_dispatcher(history_messages)
+                # --- SYSTEM PROMPT OLUŞTURMA ---
+                system_prompt = await llm_dispatcher.build_system_prompt(
+                    self.user_profile, self.gpt_package
+                )
+                # Hafıza mesajlarını system prompt'a ekle
+                if memory_contexts:
+                    memory_block = "\n\n[Geçmiş Konuşma Hafızası]:\n" + "\n".join([
+                        f"[{ctx['timestamp']}] {ctx['summary']}" for ctx in memory_contexts
+                    ])
+                    system_prompt += memory_block
+
+                # --- LLM YANITI ÜRETME (system prompt ile) ---
+                await self.generate_response_from_dispatcher_with_system_prompt(history_messages, system_prompt)
 
             else:
                 logger.warning(f"Unknown event type received: {event_type}")
@@ -526,3 +540,194 @@ class ChatConsumer(AsyncWebsocketConsumer):
     #                 "new_gpt_package_name": self.gpt_package.name,
     #                 "conversation_id": str(self.conversation.id)
     #             }))
+
+    # --- KONUŞMA KONTEXTİ ÖZETLEME ve QDRANT'A KAYIT ---
+    async def maybe_update_conversation_summary(self):
+        # Son N mesajı al, özetle, embedding'le, Qdrant'a kaydet
+        messages = await self.prepare_message_history(limit=20)
+        if len(messages) < self.context_summary_trigger:
+            return  # Yeterli mesaj yoksa özetleme yapma
+        context_text = " ".join([m["content"] for m in messages if m["content"]])
+        # LLM ile özetleme (örnek, burada basitçe ilk 300 karakteri alıyoruz, gerçek özetleme için LLM çağrısı eklenebilir)
+        summary = context_text[:300] + ("..." if len(context_text) > 300 else "")
+        embedding = await sync_to_async(semantic.get_embedding)(summary)
+        timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        payload = {
+            "id": f"{self.conversation.id}_{timestamp}",
+            "conversation_id": str(self.conversation.id),
+            "user_profile_id": str(self.user_profile.id),
+            "summary": summary,
+            "timestamp": timestamp
+        }
+        await sync_to_async(semantic.add_to_qdrant)(
+            collection_name="conversation_contexts",
+            text=summary,
+            payload=payload
+        )
+        self.conversations_pool[self.conversation.id] = {"summary": summary, "embedding": embedding, "timestamp": timestamp}
+
+    # --- QDRANT'TAN HAFIZA ARAMASI ---
+    async def search_memory_contexts(self, query: str):
+        query_embedding = await sync_to_async(semantic.get_embedding)(query)
+        filter_dict = {"user_profile_id": str(self.user_profile.id)}
+        results = await sync_to_async(semantic.search_qdrant)(
+            collection_name="conversation_contexts",
+            text=query,
+            filter=filter_dict,
+            limit=self.memory_context_limit
+        )
+        memory_contexts = []
+        for r in results:
+            payload = r.payload
+            memory_contexts.append({
+                "summary": payload.get("summary", ""),
+                "timestamp": payload.get("timestamp", "")
+            })
+        return memory_contexts
+
+    # --- LLM YANITI ÜRETME (system prompt ile) ---
+    async def generate_response_from_dispatcher_with_system_prompt(self, history_messages: List[Dict[str, Any]], system_prompt: str):
+        if not self.user_profile or not self.gpt_package or not self.conversation:
+            logger.error("Cannot generate response: user_profile, gpt_package, or conversation is not set.")
+            await self.send_error("Yanıt üretilemedi: Gerekli oturum bilgileri eksik.")
+            return
+
+        current_message_history = list(history_messages)
+        full_assistant_response_content = ""
+        final_actions_for_ui = []
+        MAX_TOOL_CYCLES = 5
+        tool_cycle_count = 0
+
+        try:
+            while tool_cycle_count < MAX_TOOL_CYCLES:
+                logger.debug(f"Tool cycle {tool_cycle_count + 1}. History length: {len(current_message_history)}")
+                streamed_content_in_this_llm_call = False
+                llm_requested_tool_calls = []
+
+                # system prompt'u ilk mesaja prepend et
+                processed_messages = [{"role": "system", "content": system_prompt}] + current_message_history
+
+                async for response_part in llm_dispatcher.call_model(
+                    self.gpt_package,
+                    self.user_profile,
+                    processed_messages
+                ):
+                    event_type = response_part.get("type")
+                    event_data = response_part.get("data")
+
+                    if event_type == "content_chunk":
+                        full_assistant_response_content += event_data
+                        streamed_content_in_this_llm_call = True
+                        await self.send(text_data=json.dumps({
+                            "type": "assistant_message_chunk",
+                            "chunk": event_data
+                        }))
+                    elif event_type == "tool_calls_ready":
+                        llm_requested_tool_calls = event_data
+                        logger.info(f"LLM requested {len(llm_requested_tool_calls)} tools to be called.")
+                    elif event_type == "stream_end":
+                        logger.debug(f"LLM stream ended. Finish reason: {event_data.get('finish_reason')}")
+                        current_ui_actions = llm_dispatcher.parse_actions(full_assistant_response_content)
+                        if current_ui_actions:
+                            final_actions_for_ui.extend(current_ui_actions)
+                            full_assistant_response_content = llm_dispatcher.process_model_response_text_for_ui(full_assistant_response_content)
+                        break
+                    elif event_type == "error":
+                        logger.error(f"Error from llm_dispatcher: {event_data}")
+                        await self.send_error(f"Model hatası: {event_data}")
+                        return
+
+                if not llm_requested_tool_calls:
+                    logger.debug("No tool calls requested by LLM in this cycle. Ending tool loop.")
+                    break
+
+                assistant_message_for_history = {
+                    "role": "assistant",
+                    "content": full_assistant_response_content if streamed_content_in_this_llm_call else None,
+                    "tool_calls": llm_requested_tool_calls
+                }
+                current_message_history.append(assistant_message_for_history)
+                full_assistant_response_content = ""
+
+                tool_execution_results = []
+                for tool_call_request in llm_requested_tool_calls:
+                    tool_name = tool_call_request.get("function", {}).get("name")
+                    tool_args_str = tool_call_request.get("function", {}).get("arguments")
+                    tool_call_id = tool_call_request.get("id")
+
+                    if not tool_name or not tool_args_str or not tool_call_id:
+                        logger.error(f"Invalid tool_call_request structure: {tool_call_request}")
+                        tool_execution_results.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id or f"error_tc_{uuid.uuid4()}",
+                            "name": tool_name or "unknown_tool",
+                            "content": json.dumps({"error": "Invalid tool call structure from LLM."})
+                        })
+                        continue
+                    try:
+                        tool_args_dict = json.loads(tool_args_str)
+                        function_name = "call_service"
+                        if self.gpt_package:
+                            for service in self.gpt_package.services.all():
+                                if service.key == tool_name and service.is_active and service.default_params:
+                                    merged_args = service.default_params.copy()
+                                    merged_args.update(tool_args_dict)
+                                    function_name = service.function_name
+                                    tool_args_dict = merged_args
+                                    break
+                        else:
+                            logger.error(f"GptPackage not found for tool {tool_name}")
+                        logger.info(f"Executing tool: {tool_name} with args: {tool_args_dict}")
+                        result = await sync_to_async(run_tool)(function_name, tool_name, tool_args_dict, user_profile=self.user_profile)
+                        tool_execution_results.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "name": tool_name,
+                            "content": json.dumps(result)
+                        })
+                    except json.JSONDecodeError:
+                        logger.error(f"Failed to decode arguments for tool {tool_name}: {tool_args_str}")
+                        tool_execution_results.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "name": tool_name,
+                            "content": json.dumps({"error": f"Invalid arguments format: {tool_args_str}"})
+                        })
+                    except Exception as e:
+                        logger.error(f"Error running tool {tool_name}: {e}", exc_info=True)
+                        tool_execution_results.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "name": tool_name,
+                            "content": json.dumps({"error": f"Tool execution failed: {str(e)}"})
+                        })
+                current_message_history.extend(tool_execution_results)
+                tool_cycle_count += 1
+
+            if tool_cycle_count >= MAX_TOOL_CYCLES:
+                logger.warning("Maximum tool call cycles reached.")
+
+            await self.send(text_data=json.dumps({
+                "type": "assistant_stream_finalized"
+            }))
+
+            if full_assistant_response_content or final_actions_for_ui:
+                await Message.objects.acreate(
+                    conversation=self.conversation,
+                    sender='gpt',
+                    content=full_assistant_response_content.strip(),
+                    gpt_package=self.gpt_package,
+                    actions=final_actions_for_ui if final_actions_for_ui else None
+                )
+                self.conversation.updated_at = datetime.datetime.now(datetime.timezone.utc)
+                await self.conversation.asave(update_fields=['updated_at'])
+
+            if final_actions_for_ui:
+                await self.send(text_data=json.dumps({
+                    "type": "ui_actions",
+                    "actions": final_actions_for_ui
+                }))
+
+        except Exception as e:
+            logger.error(f"Error in generate_response_from_dispatcher_with_system_prompt: {e}", exc_info=True)
+            await self.send_error(f"Yanıt üretirken bir hata oluştu: {str(e)}")
