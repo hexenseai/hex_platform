@@ -62,7 +62,7 @@ class MessageAdmin(admin.ModelAdmin):
     }
     list_display = ('conversation', 'sender', 'gpt_package', 'timestamp')
     list_filter = ('sender', 'timestamp', 'gpt_package')
-    search_fields = ('content', 'conversation__title')
+    search_fields = ('content', 'conversation__context')
     readonly_fields = ('timestamp',)
     fields = ('conversation', 'sender', 'content', 'gpt_package', 'actions', 'timestamp')
 
