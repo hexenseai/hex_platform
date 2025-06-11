@@ -108,7 +108,9 @@ class Conversation(models.Model):
     
     # İleride GPT paket bilgisi eklenebilir
     def __str__(self):
-        return self.title or f"Conversation {self.pk}"
+        if self.context:
+            return self.context[:50]
+        return f"Conversation {self.pk}"
 
     class Meta:
         verbose_name = "Conversation"
